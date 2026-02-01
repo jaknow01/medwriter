@@ -10,5 +10,14 @@ wheels/
 # Virtual environments
 .venv
 
-#Claude markdowns
+# Logs
+logs/
+*.log
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
 .claude/
+
