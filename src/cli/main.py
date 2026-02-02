@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from uuid import uuid4, UUID
 
 import typer
 from loguru import logger
@@ -28,6 +29,7 @@ class CLIInterface:
         self.worker: Worker | None = None
         self.server_process: subprocess.Popen | None = None
         self.running = False
+        self.conversation_id: UUID = uuid4()  # New conversation ID for Phase Two
 
     async def start_mcp_server(self) -> bool:
         """
@@ -131,7 +133,8 @@ class CLIInterface:
 **Available Commands:**
 
 - `/help` - Show this help message
-- `/clear` - Clear conversation history
+- `/new` - Start a new conversation
+- `/clear` - Clear conversation history (in-memory only)
 - `/model openai|anthropic` - Switch LLM provider
 - `/exit` - Quit application
 
@@ -142,6 +145,11 @@ The assistant has access to:
 - Web search for medical information
 - Medical knowledge database
 - Citation generator
+
+**Conversation History:**
+
+Your conversations are automatically saved to the database. Previous messages
+in the same conversation are used as context for better responses.
 
 **Example queries:**
 
@@ -165,6 +173,12 @@ The assistant has access to:
 
         if command == "/help":
             self.show_help()
+
+        elif command == "/new":
+            # Start new conversation
+            self.conversation_id = uuid4()
+            console.print(f"[green]✓ Started new conversation[/green]")
+            console.print(f"[dim]Conversation ID: {self.conversation_id}[/dim]")
 
         elif command == "/clear":
             if self.worker:
@@ -205,6 +219,7 @@ The assistant has access to:
     async def chat_loop(self) -> None:
         """Main interactive chat loop."""
         console.print("\n[green]Ready! Type your message or /help for commands.[/green]")
+        console.print(f"[dim]Conversation ID: {self.conversation_id}[/dim]")
 
         while self.running:
             try:
@@ -228,13 +243,19 @@ The assistant has access to:
 
                 console.print()  # Empty line before response
 
-                # Stream response
+                # Process query with conversation context (Phase Two)
                 try:
-                    response_chunks = []
-                    async for chunk in self.worker.stream_query(user_input):
-                        response_chunks.append(chunk)
-                        console.print(chunk, end="")
+                    # Show loading indicator
+                    console.print("[dim]Processing with conversation history...[/dim]")
 
+                    # Process with context from database
+                    response = await self.worker.process_query_with_context(
+                        user_input,
+                        self.conversation_id
+                    )
+
+                    # Display response
+                    console.print(response)
                     console.print()  # New line after response
 
                 except Exception as e:
@@ -252,7 +273,8 @@ The assistant has access to:
         """Run the CLI application."""
         # Show banner
         console.print(Panel(
-            "[bold cyan]🏥 Medical Article Writer - Phase One[/bold cyan]",
+            "[bold cyan]🏥 Medical Article Writer - Phase Two[/bold cyan]\n"
+            "[dim]Conversations saved to database • Previous messages used as context[/dim]",
             border_style="cyan"
         ))
 

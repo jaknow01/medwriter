@@ -53,6 +53,24 @@ class Settings(BaseSettings):
         description="Log file path"
     )
 
+    # Database Configuration
+    database_url: str = Field(
+        default="postgresql+asyncpg://medwriter:password@localhost:5432/medwriter_db",
+        description="PostgreSQL async connection URL"
+    )
+
+    # Redis Configuration
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL"
+    )
+
+    # Worker Configuration
+    worker_id: str = Field(
+        default="worker-1",
+        description="Unique worker identifier"
+    )
+
     @field_validator("llm_provider")
     @classmethod
     def validate_llm_provider(cls, v: str) -> str:

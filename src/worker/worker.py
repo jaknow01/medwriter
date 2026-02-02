@@ -1,12 +1,16 @@
 """Main worker module orchestrating agent and MCP client."""
 
 import asyncio
-from typing import Literal
+from typing import Literal, List
+from uuid import UUID
 from loguru import logger
 
 from src.worker.mcp_client import MCPClient
 from src.worker.agent import MedicalArticleAgent
+from src.worker.title_generator import TitleGenerator
 from src.config.settings import Settings
+from src.database import DatabaseManager, ConversationRepository, Message
+from src.redis import RedisManager, JobQueue
 
 
 class Worker:
@@ -23,6 +27,12 @@ class Worker:
         self.mcp_client: MCPClient | None = None
         self.agent: MedicalArticleAgent | None = None
         self._initialized = False
+
+        # Database and Redis components
+        self.db_manager: DatabaseManager | None = None
+        self.redis_manager: RedisManager | None = None
+        self.job_queue: JobQueue | None = None
+        self.title_generator: TitleGenerator | None = None
 
         logger.info("Worker instance created")
 
@@ -69,6 +79,25 @@ class Worker:
                 max_tokens=model_config["max_tokens"],
             )
 
+            # Initialize database
+            logger.info(f"Connecting to database at {self.settings.database_url}")
+            self.db_manager = DatabaseManager(self.settings.database_url)
+            await self.db_manager.initialize_db()
+
+            # Initialize Redis
+            logger.info(f"Connecting to Redis at {self.settings.redis_url}")
+            self.redis_manager = RedisManager(self.settings.redis_url)
+            await self.redis_manager.connect()
+            self.job_queue = JobQueue(self.redis_manager.client)
+
+            # Initialize title generator
+            logger.info("Initializing title generator")
+            self.title_generator = TitleGenerator(
+                llm_provider=self.settings.llm_provider,
+                api_key=api_key,
+                model_name="gpt-4o-mini",  # Use cheaper model for titles
+            )
+
             self._initialized = True
             logger.info("Worker initialization complete")
 
@@ -79,7 +108,7 @@ class Worker:
 
     async def process_query(self, query: str) -> str:
         """
-        Process a user query and return response.
+        Process a user query and return response (without conversation context).
 
         Args:
             query: User query
@@ -103,6 +132,82 @@ class Worker:
         except Exception as e:
             logger.error(f"Error processing query: {e}")
             raise
+
+    async def process_query_with_context(
+        self, query: str, conv_id: UUID
+    ) -> str:
+        """
+        Process query with conversation history from database.
+
+        Args:
+            query: User query
+            conv_id: Conversation UUID
+
+        Returns:
+            Agent response
+
+        Raises:
+            RuntimeError: If worker not initialized
+        """
+        if not self._initialized or not self.agent:
+            raise RuntimeError("Worker not initialized. Call initialize() first.")
+
+        logger.info(f"Processing query with context for conversation {conv_id}")
+
+        async with self.db_manager.get_session() as session:
+            repo = ConversationRepository(session)
+
+            # Get or create conversation
+            conversation = await repo.get_conversation(conv_id)
+            if not conversation:
+                logger.info(f"Creating new conversation {conv_id}")
+                conversation = await repo.create_conversation(conv_id=conv_id)
+                # conv_id stays the same (no need to reassign)
+
+            # Get previous messages for context
+            messages = await repo.get_messages(conv_id)
+
+            # Build context from previous messages
+            context = self._build_context(messages)
+
+            # Add user message to database
+            await repo.add_message(conv_id, role="User", content=query)
+
+            # Process query with agent (with context)
+            full_query = f"{context}\n\nUser: {query}" if context else query
+            logger.info(f"Processing with {len(messages)} previous messages as context")
+            response = await self.agent.chat(full_query)
+
+            # Add AI response to database
+            await repo.add_message(conv_id, role="AI", content=response)
+
+            # Generate title if this is the first message and no title exists
+            if not conversation.title and len(messages) == 0:
+                logger.info("Generating title for new conversation")
+                title = await self.title_generator.generate_title(query)
+                await repo.update_title(conv_id, title)
+
+            logger.info("Query with context processed successfully")
+            return response
+
+    def _build_context(self, messages: List[Message]) -> str:
+        """
+        Build context string from previous messages.
+
+        Args:
+            messages: List of previous messages
+
+        Returns:
+            Context string
+        """
+        if not messages:
+            return ""
+
+        context_parts = ["Previous conversation:"]
+        for msg in messages:
+            context_parts.append(f"{msg.role}: {msg.content}")
+
+        return "\n".join(context_parts)
 
     async def stream_query(self, query: str):
         """
@@ -193,7 +298,17 @@ class Worker:
                 await self.mcp_client.disconnect()
                 self.mcp_client = None
 
+            if self.db_manager:
+                await self.db_manager.close()
+                self.db_manager = None
+
+            if self.redis_manager:
+                await self.redis_manager.close()
+                self.redis_manager = None
+
             self.agent = None
+            self.job_queue = None
+            self.title_generator = None
             self._initialized = False
 
             logger.info("Worker shutdown complete")
