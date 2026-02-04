@@ -81,7 +81,7 @@ services:
       - medwriter_network
     restart: unless-stopped
 
-  # Worker Service
+  # Worker Service (3 async workers, scalable to 6)
   worker:
     build:
       context: .
@@ -97,6 +97,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LOG_LEVEL=INFO
+      - NUM_WORKERS=3  # Number of concurrent async workers (max 6)
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
