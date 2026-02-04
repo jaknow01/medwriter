@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedWriter - Kreator Artykułów Medycznych</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>🏥 MedWriter</h1>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="welcome-container">
+            <h1 class="welcome-title">Kreator Artykułów Medycznych</h1>
+            <p class="welcome-subtitle">
+                Profesjonalne narzędzie do tworzenia artykułów medycznych z pomocą AI
+            </p>
+
+            <div class="action-buttons">
+                <a href="/conversations.html" class="action-btn">
+                    <div class="action-btn-icon">📚</div>
+                    <div class="action-btn-title">Kontynuuj pisanie</div>
+                    <div class="action-btn-desc">
+                        Przeglądaj i kontynuuj poprzednie rozmowy
+                    </div>
+                </a>
+
+                <a href="#" class="action-btn" id="newDraftBtn">
+                    <div class="action-btn-icon">📝</div>
+                    <div class="action-btn-title">Nowy artykuł</div>
+                    <div class="action-btn-desc">
+                        Rozpocznij nowy artykuł medyczny od zera
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+        // Handle new draft button
+        document.getElementById('newDraftBtn').addEventListener('click', async (e) => {
+            e.preventDefault();
+
+            try {
+                // Create new conversation
+                const conversation = await MedWriterAPI.createConversation();
+
+                // Redirect to chat
+                window.location.href = `/chat.html?id=${conversation.conv_id}`;
+            } catch (error) {
+                console.error('Error creating conversation:', error);
+                alert('Nie udało się utworzyć nowej rozmowy. Spróbuj ponownie.');
+            }
+        });
+    </script>
+</body>
+</html>

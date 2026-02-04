@@ -197,17 +197,18 @@ def citation_generator(topic: str, num_citations: int = 3) -> dict:
     return _citation_generator_impl(topic, num_citations)
 
 
-def run_server(port: int = 8000):
+def run_server(port: int = 8000, host: str = "127.0.0.1"):
     """
     Run the MCP server.
 
     Args:
         port: Port to run the server on
+        host: Host to bind to (default: 127.0.0.1)
     """
-    logger.info(f"Starting MCP server on port {port}")
+    logger.info(f"Starting MCP server on {host}:{port}")
     try:
         # Run the FastMCP server
-        mcp.run(transport="http", port=port)
+        mcp.run(transport="http", host=host, port=port)
     except Exception as e:
         logger.error(f"Error running MCP server: {e}")
         raise
@@ -216,6 +217,7 @@ def run_server(port: int = 8000):
 if __name__ == "__main__":
     # Import settings to get port configuration
     from src.config.settings import settings
+    import os
 
     # Ensure logs directory exists
     from pathlib import Path
@@ -229,4 +231,8 @@ if __name__ == "__main__":
         level="DEBUG",
     )
 
-    run_server(port=settings.mcp_server_port)
+    # Get host from environment or use default
+    host = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
+    port = int(os.getenv("MCP_SERVER_PORT", settings.mcp_server_port))
+
+    run_server(host=host, port=port)

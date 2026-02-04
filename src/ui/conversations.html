@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lista rozmów - MedWriter</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="/index.html" class="back-btn">
+                ← Powrót
+            </a>
+            <h1>Lista rozmów</h1>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="loadingState" class="loading">
+            <div class="loading-spinner" style="margin: 0 auto 10px;"></div>
+            <p>Ładowanie rozmów...</p>
+        </div>
+
+        <div id="errorState" class="error-message" style="display: none;">
+            Nie udało się załadować rozmów. Spróbuj ponownie.
+        </div>
+
+        <div id="conversationsList" class="conversations-list" style="display: none;">
+            <!-- Conversations will be loaded here -->
+        </div>
+
+        <div id="emptyState" class="empty-state" style="display: none;">
+            <div class="empty-state-icon">💬</div>
+            <p class="empty-state-text">Brak zapisanych rozmów</p>
+            <p style="margin-top: 20px;">
+                <a href="/index.html" style="color: var(--primary-color); text-decoration: none;">
+                    ← Wróć do strony głównej, aby rozpocząć nową rozmowę
+                </a>
+            </p>
+        </div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+        async function loadConversations() {
+            const loadingState = document.getElementById('loadingState');
+            const errorState = document.getElementById('errorState');
+            const conversationsList = document.getElementById('conversationsList');
+            const emptyState = document.getElementById('emptyState');
+
+            try {
+                // Load conversations from API
+                const conversations = await MedWriterAPI.listConversations();
+
+                // Hide loading
+                loadingState.style.display = 'none';
+
+                if (conversations.length === 0) {
+                    // Show empty state
+                    emptyState.style.display = 'block';
+                } else {
+                    // Show conversations list
+                    conversationsList.style.display = 'flex';
+
+                    // Render conversations
+                    conversationsList.innerHTML = conversations.map(conv => {
+                        const title = conv.title || 'Bez tytułu';
+                        const date = formatDate(conv.updated_at);
+                        const messageCount = conv.message_count;
+                        const messageText = pluralize(
+                            messageCount,
+                            'wiadomość',
+                            'wiadomości',
+                            'wiadomości'
+                        );
+
+                        return `
+                            <a href="/chat.html?id=${conv.conv_id}" class="conversation-card">
+                                <div class="conversation-title">${escapeHtml(title)}</div>
+                                <div class="conversation-meta">
+                                    <span>📅 ${date}</span>
+                                    <span>💬 ${messageCount} ${messageText}</span>
+                                </div>
+                            </a>
+                        `;
+                    }).join('');
+                }
+
+            } catch (error) {
+                console.error('Error loading conversations:', error);
+                loadingState.style.display = 'none';
+                errorState.style.display = 'block';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load conversations on page load
+        loadConversations();
+    </script>
+</body>
+</html>

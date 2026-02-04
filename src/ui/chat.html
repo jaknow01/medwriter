@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Czat - MedWriter</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <a href="/conversations.html" class="back-btn">
+                ← Lista
+            </a>
+            <h1 id="conversationTitle">Ładowanie...</h1>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="loading">
+                    <div class="loading-spinner" style="margin: 0 auto 10px;"></div>
+                    <p>Ładowanie wiadomości...</p>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <div id="chatForm" class="chat-input-form">
+                    <textarea
+                        id="messageInput"
+                        class="chat-input"
+                        placeholder="Wpisz wiadomość..."
+                        rows="1"
+                    ></textarea>
+                    <button type="button" id="sendBtn" class="send-btn">
+                        Wyślij
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script>
+        // Get conversation ID from URL and store it
+        function getConversationId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('id');
+        }
+
+        const conversationId = getConversationId();
+
+        if (!conversationId || conversationId === 'null' || conversationId === 'undefined') {
+            alert('Brak ID rozmowy');
+            window.location.href = '/index.html';
+            throw new Error('No conversation ID');
+        }
+
+        console.log('Conversation ID:', conversationId);
+    </script>
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const chatForm = document.getElementById('chatForm');
+        const sendBtn = document.getElementById('sendBtn');
+        const conversationTitle = document.getElementById('conversationTitle');
+
+        let isProcessing = false;
+
+        // Load conversation and messages
+        async function loadConversation() {
+            try {
+                const conversation = await MedWriterAPI.getConversation(conversationId);
+
+                // Update title
+                conversationTitle.textContent = conversation.title || 'Nowa rozmowa';
+
+                // Clear loading
+                chatMessages.innerHTML = '';
+
+                // Display messages
+                if (conversation.messages.length === 0) {
+                    chatMessages.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">💬</div>
+                            <p class="empty-state-text">Rozpocznij rozmowę, wpisując swoją pierwszą wiadomość</p>
+                        </div>
+                    `;
+                } else {
+                    conversation.messages.forEach(msg => {
+                        appendMessage(msg.role, msg.content, false);
+                    });
+
+                    // Scroll to bottom
+                    scrollToBottom();
+                }
+
+            } catch (error) {
+                console.error('Error loading conversation:', error);
+                chatMessages.innerHTML = `
+                    <div class="error-message">
+                        Nie udało się załadować rozmowy. Odśwież stronę lub wróć do listy rozmów.
+                    </div>
+                `;
+            }
+        }
+
+        // Append message to chat
+        function appendMessage(role, content, animate = true) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role.toLowerCase()}`;
+            if (!animate) {
+                messageDiv.style.animation = 'none';
+            }
+
+            const roleText = role === 'User' ? 'Ty' : 'Asystent';
+            const avatar = role === 'User' ? '👤' : '🤖';
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div class="message-content">
+                    <div class="message-role">${roleText}</div>
+                    <div class="message-text">${escapeHtml(content)}</div>
+                </div>
+            `;
+
+            chatMessages.appendChild(messageDiv);
+            scrollToBottom();
+
+            return messageDiv;
+        }
+
+        // Append loading message
+        function appendLoadingMessage() {
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant';
+            loadingDiv.id = 'loadingMessage';
+
+            loadingDiv.innerHTML = `
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                    <div class="message-role">Asystent</div>
+                    <div class="message-loading">
+                        <div class="loading-spinner"></div>
+                        <span>Przetwarzanie...</span>
+                    </div>
+                </div>
+            `;
+
+            chatMessages.appendChild(loadingDiv);
+            scrollToBottom();
+
+            return loadingDiv;
+        }
+
+        // Handle message sending
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+
+            if (!message || isProcessing) {
+                return;
+            }
+
+            // Disable input
+            isProcessing = true;
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+
+            try {
+                // Clear input
+                messageInput.value = '';
+
+                // Add user message to UI
+                appendMessage('User', message);
+
+                // Show loading
+                const loadingMsg = appendLoadingMessage();
+
+                // Send message to API (creates job)
+                const response = await MedWriterAPI.sendMessage(conversationId, message);
+
+                // Poll for job completion
+                await MedWriterAPI.pollJobStatus(
+                    response.job_id,
+                    (status) => {
+                        // Update loading message with status
+                        const statusText = {
+                            'Pending': 'Oczekiwanie...',
+                            'Processing': 'Przetwarzanie...',
+                            'Ready': 'Gotowe'
+                        }[status.status] || status.status;
+
+                        if (loadingMsg.querySelector('.message-loading span')) {
+                            loadingMsg.querySelector('.message-loading span').textContent = statusText;
+                        }
+                    }
+                );
+
+                // Remove loading message
+                loadingMsg.remove();
+
+                // Reload conversation to show new message and updated title
+                await loadConversation();
+
+            } catch (error) {
+                console.error('Error sending message:', error);
+
+                // Remove loading message if exists
+                const loadingMsg = document.getElementById('loadingMessage');
+                if (loadingMsg) {
+                    loadingMsg.remove();
+                }
+
+                // Show error
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.textContent = 'Nie udało się wysłać wiadomości. Spróbuj ponownie.';
+                chatMessages.appendChild(errorDiv);
+                scrollToBottom();
+
+            } finally {
+                // Re-enable input
+                isProcessing = false;
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        // Add click handler for send button
+        sendBtn.addEventListener('click', sendMessage);
+
+        // Add Enter key handler for textarea
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Auto-resize textarea
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Load conversation on page load
+        loadConversation();
+
+        // Focus input
+        messageInput.focus();
+    </script>
+</body>
+</html>

@@ -134,7 +134,7 @@ class Worker:
             raise
 
     async def process_query_with_context(
-        self, query: str, conv_id: UUID
+        self, query: str, conv_id: UUID, save_user_message: bool = True
     ) -> str:
         """
         Process query with conversation history from database.
@@ -142,6 +142,8 @@ class Worker:
         Args:
             query: User query
             conv_id: Conversation UUID
+            save_user_message: Whether to save user message to DB (default True).
+                              Set to False when using with API (API saves it first).
 
         Returns:
             Agent response
@@ -170,8 +172,10 @@ class Worker:
             # Build context from previous messages
             context = self._build_context(messages)
 
-            # Add user message to database
-            await repo.add_message(conv_id, role="User", content=query)
+            # Add user message to database (if not already saved by API)
+            if save_user_message:
+                await repo.add_message(conv_id, role="User", content=query)
+                logger.debug("Saved user message to database")
 
             # Process query with agent (with context)
             full_query = f"{context}\n\nUser: {query}" if context else query
@@ -182,7 +186,8 @@ class Worker:
             await repo.add_message(conv_id, role="AI", content=response)
 
             # Generate title if this is the first message and no title exists
-            if not conversation.title and len(messages) == 0:
+            # Note: messages may have 0 (worker saves user msg) or 1 (API saved user msg) message
+            if not conversation.title and len(messages) <= 1:
                 logger.info("Generating title for new conversation")
                 title = await self.title_generator.generate_title(query)
                 await repo.update_title(conv_id, title)
