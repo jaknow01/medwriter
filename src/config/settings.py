@@ -92,13 +92,13 @@ class Settings(BaseSettings):
             return {
                 "model": self.model_name or "gpt-4",
                 "temperature": 0.7,
-                "max_tokens": 2000,
+                "max_tokens": 4096,
             }
         else:  # anthropic
             return {
                 "model": self.model_name or "claude-3-opus-20240229",
                 "temperature": 0.7,
-                "max_tokens": 2000,
+                "max_tokens": 4096,
             }
 
 

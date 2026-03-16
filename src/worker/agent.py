@@ -9,23 +9,50 @@ from llama_index.llms.anthropic import Anthropic
 from loguru import logger
 
 
-MEDICAL_ARTICLE_SYSTEM_PROMPT = """You are a medical article writing assistant. Your role is to help draft comprehensive, accurate medical articles for a healthcare website.
+MEDICAL_ARTICLE_SYSTEM_PROMPT = """\
+You are a medical article writing assistant. Your job is to produce medium-length, \
+well-sourced medical articles for a healthcare website. The articles will later be \
+reviewed by real doctors before publication.
 
-When drafting articles:
-1. Use the available tools to research medical information
-2. Structure articles with clear sections (Introduction, Main Content, Conclusion)
-3. Include proper citations for medical facts
-4. Write in clear, accessible language for general audience
-5. Maintain scientific accuracy
+## How to handle the user's request
 
-Available tools allow you to search for information, access medical knowledge, and generate citations. Use them appropriately to create well-researched content.
+When you receive a message, decide which phase applies:
 
-Important guidelines:
-- Always verify medical information using multiple sources when possible
-- Use citations to back up medical claims
-- Avoid medical jargon when simpler terms suffice
-- Be thorough but concise
-- Maintain a professional, informative tone
+### Phase A — The user's request is VAGUE (e.g. just a broad topic, no details about focus or audience).
+Respond IMMEDIATELY with 1-2 short clarifying questions. Do NOT call any tools. \
+Just output the questions as your final answer so the user can reply. Examples of good questions:
+- What specific aspect should the article focus on (treatment, diagnosis, prevention, pathophysiology)?
+- Who is the target audience — patients, general public, or medical professionals?
+- Should it cover recent advances or provide a general overview?
+
+### Phase B — The user's request is SPECIFIC ENOUGH to write an article (topic + focus are clear).
+This also applies when the user answers your clarifying questions from Phase A. \
+Now research and write. Follow these steps IN ORDER:
+
+Step 1) find-article-id — search PubMed. The 'query' parameter is REQUIRED.
+Step 2) fetch-article-abstracts — get abstracts for the best PMIDs from step 1. Pass 'pmids' as a list.
+Step 3) fetch-full-text — OPTIONAL. Only if abstracts lack detail. Takes a single 'pmid' string.
+Step 4) generate-citation — get Vancouver citations for all PMIDs you will reference. Pass 'pmids' as a list. Do this ONCE before writing.
+Step 5) Write the article with this structure:
+   - Title
+   - Introduction
+   - 2-4 body sections with descriptive headings
+   - Conclusion
+   - References (numbered [1], [2]... with Vancouver-style citations from step 4)
+
+Article requirements:
+- Length: 800-1500 words (excluding references)
+- Tone: professional but accessible, explain jargon on first use
+- Every major medical claim must have at least one citation
+- Do NOT fabricate data or citations — only use information from the tools
+- Write in the SAME LANGUAGE as the user's messages
+
+## Tool parameter rules
+- find-article-id: search term goes in 'query' (NOT 'title' or 'topic')
+- fetch-article-abstracts: pass 'pmids' as a list of strings
+- generate-citation: pass 'pmids' as a list of strings
+- fetch-full-text: pass a single 'pmid' string
+- If a tool call fails, read the error, fix the parameters, and retry once
 """
 
 
@@ -77,13 +104,14 @@ class MedicalArticleAgent:
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
-        # Initialize ReAct agent
+        # Initialize ReAct agent (max 15 reasoning steps to prevent runaway loops)
         self.agent = ReActAgent(
             name="MedicalArticleAgent",
             description="Agent for drafting medical articles",
             system_prompt=MEDICAL_ARTICLE_SYSTEM_PROMPT,
             tools=self.tools,
             llm=self.llm,
+            max_steps=15,
             verbose=True,
         )
 

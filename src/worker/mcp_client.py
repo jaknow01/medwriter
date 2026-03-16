@@ -1,10 +1,23 @@
 """MCP Client for connecting to MCP server via HTTP."""
 
-from typing import Any
+import json
+from typing import Any, List, Optional
 from loguru import logger
+from pydantic import BaseModel, Field, create_model
 from llama_index.core.tools import FunctionTool
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+
+
+# Map JSON Schema types to Python types
+_JSON_TYPE_MAP = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
 
 
 class MCPClient:
@@ -93,6 +106,42 @@ class MCPClient:
             logger.error(f"Error discovering tools: {e}")
             raise
 
+    def _build_fn_schema(self, tool_name: str, input_schema: dict) -> type[BaseModel]:
+        """
+        Build a Pydantic model from an MCP tool's inputSchema so that
+        LlamaIndex knows which parameters the tool expects.
+        """
+        fields: dict[str, Any] = {}
+        properties = input_schema.get("properties", {})
+        required = set(input_schema.get("required", []))
+
+        for prop_name, prop_def in properties.items():
+            # Resolve type
+            json_type = prop_def.get("type", "string")
+            python_type = _JSON_TYPE_MAP.get(json_type, str)
+
+            # Handle array items (e.g. List[str])
+            if json_type == "array":
+                items_type = prop_def.get("items", {}).get("type", "string")
+                inner = _JSON_TYPE_MAP.get(items_type, str)
+                python_type = List[inner]
+
+            description = prop_def.get("description", "")
+            default = prop_def.get("default")
+
+            if prop_name in required:
+                fields[prop_name] = (python_type, Field(description=description))
+            else:
+                if default is not None:
+                    fields[prop_name] = (Optional[python_type], Field(default=default, description=description))
+                else:
+                    fields[prop_name] = (Optional[python_type], Field(default=None, description=description))
+
+        # Create a unique model class name (e.g. "FindArticleIdArgs")
+        class_name = "".join(part.capitalize() for part in tool_name.replace("-", "_").split("_")) + "Args"
+        model = create_model(class_name, **fields)
+        return model
+
     def get_tools(self) -> list[FunctionTool]:
         """
         Get available tools as LlamaIndex FunctionTool objects.
@@ -130,16 +179,20 @@ class MCPClient:
             fn.__name__ = tool_name
             fn.__doc__ = tool_info.get("description", f"Tool: {tool_name}")
 
-            # LlamaIndex supports async tools - just pass the async function directly
+            # Build Pydantic schema from MCP inputSchema
+            input_schema = tool_info.get("inputSchema", {})
+            fn_schema = self._build_fn_schema(tool_name, input_schema)
+
             llama_tool = FunctionTool.from_defaults(
                 fn=fn,
                 name=tool_name,
                 description=tool_info.get("description", f"Tool: {tool_name}"),
-                async_fn=fn,  # Specify as async tool
+                async_fn=fn,
+                fn_schema=fn_schema,
             )
 
             llama_tools.append(llama_tool)
-            logger.debug(f"Created LlamaIndex async tool: {tool_name}")
+            logger.debug(f"Created LlamaIndex async tool: {tool_name} with schema {fn_schema.model_fields.keys()}")
 
         logger.info(f"Converted {len(llama_tools)} MCP tools to LlamaIndex format")
         return llama_tools
@@ -167,28 +220,24 @@ class MCPClient:
             # Call tool using FastMCP client
             result = await self.client.call_tool(name, parameters)
 
-            # Extract content from result
-            if hasattr(result, 'content'):
-                # Result is a CallToolResult object
+            # Extract content from result (CallToolResult)
+            # Prefer structuredContent (used by tools with structured_output=True)
+            if hasattr(result, 'structuredContent') and result.structuredContent is not None:
+                result_data = result.structuredContent
+            elif hasattr(result, 'content'):
                 content_list = result.content
                 if content_list and len(content_list) > 0:
                     first_content = content_list[0]
                     if hasattr(first_content, 'text'):
-                        # It's a text content
-                        import json
                         try:
-                            # Try to parse as JSON
                             result_data = json.loads(first_content.text)
-                        except:
-                            # If not JSON, return as string
+                        except (json.JSONDecodeError, TypeError):
                             result_data = first_content.text
                     else:
-                        # Return the content object
                         result_data = first_content
                 else:
                     result_data = {}
             else:
-                # Return result as-is
                 result_data = result
 
             logger.debug(f"Tool {name} returned: {result_data}")
