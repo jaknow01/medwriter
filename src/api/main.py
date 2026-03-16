@@ -64,9 +64,15 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Frontend is served from the same origin (API serves static files),
+# so we only need to allow the API's own origin for browser requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=[
+        "http://localhost:8003",
+        "http://127.0.0.1:8003",
+        "http://api:8003",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,0 +1,27 @@
+# MedWriter - Quick Docker Commands Reference
+
+## Start all services
+docker compose up -d
+
+## Stop all services
+docker compose down
+
+## View logs
+docker compose logs -f                  # All services
+docker compose logs -f worker           # Worker only
+docker compose logs -f api              # API only
+
+## Rebuild after code changes
+docker compose up -d --build
+
+## Check service status
+docker compose ps
+
+## Access the application
+http://localhost:8003                   # UI
+http://localhost:8003/docs              # API documentation
+
+## Troubleshooting
+docker compose logs worker --tail 50    # Check worker logs
+docker compose restart worker           # Restart worker
+docker compose down -v                  # Reset everything (deletes data!)
