@@ -65,6 +65,24 @@ class Settings(BaseSettings):
         description="Redis connection URL"
     )
 
+    # PDF / ChromaDB Configuration
+    chromadb_dir: str = Field(
+        default="/app/data/chromadb",
+        description="ChromaDB persistence directory for user PDF chunks"
+    )
+    pdf_chunk_size: int = Field(
+        default=1000,
+        description="Chunk size in tokens for PDF text splitting"
+    )
+    pdf_chunk_overlap: int = Field(
+        default=200,
+        description="Chunk overlap in tokens for PDF text splitting"
+    )
+    pdf_top_k: int = Field(
+        default=5,
+        description="Number of PDF chunks to retrieve per query"
+    )
+
     # Worker Configuration
     worker_id: str = Field(
         default="worker-1",
