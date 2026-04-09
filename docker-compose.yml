@@ -37,6 +37,26 @@ services:
     networks:
       - medwriter_network
 
+  # ChromaDB Vector Store
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: medwriter_chromadb
+    expose:
+      - "8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - medwriter_network
+    restart: unless-stopped
+
   # MCP Server (real medwriter-server with PubMed tools)
   mcp_server:
     build:
@@ -73,6 +93,8 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql+asyncpg://medwriter:${POSTGRES_PASSWORD}@postgres:5432/medwriter_db
       - REDIS_URL=redis://redis:6379/0
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
       - LOG_LEVEL=INFO
     volumes:
       - ./src:/app/src
@@ -81,6 +103,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      chromadb:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
@@ -108,6 +132,8 @@ services:
       - MODEL_NAME=${MODEL_NAME:-gpt-4.1-mini}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
       - LOG_LEVEL=INFO
       - NUM_WORKERS=3  # Number of concurrent async workers (max 6)
     volumes:
@@ -120,6 +146,8 @@ services:
         condition: service_healthy
       mcp_server:
         condition: service_healthy
+      chromadb:
+        condition: service_healthy
     networks:
       - medwriter_network
     restart: unless-stopped
@@ -127,6 +155,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  chromadb_data:
 
 networks:
   medwriter_network:

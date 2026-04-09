@@ -93,8 +93,10 @@ class Worker:
             self.job_queue = JobQueue(self.redis_manager.client)
 
             # Initialize document store for PDF chunks
-            logger.info(f"Initializing DocumentStore at {self.settings.chromadb_dir}")
-            self.document_store = DocumentStore(self.settings.chromadb_dir)
+            logger.info(f"Connecting to ChromaDB at {self.settings.chromadb_host}:{self.settings.chromadb_port}")
+            self.document_store = DocumentStore(
+                host=self.settings.chromadb_host, port=self.settings.chromadb_port
+            )
 
             # Initialize title generator
             logger.info("Initializing title generator")

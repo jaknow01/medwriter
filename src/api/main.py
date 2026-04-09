@@ -39,8 +39,10 @@ async def lifespan(app: FastAPI):
     logger.info("Redis initialized")
 
     # Initialize DocumentStore for PDF chunks
-    logger.info(f"Initializing DocumentStore at {settings.chromadb_dir}")
-    dependencies.document_store = DocumentStore(settings.chromadb_dir)
+    logger.info(f"Connecting to ChromaDB at {settings.chromadb_host}:{settings.chromadb_port}")
+    dependencies.document_store = DocumentStore(
+        host=settings.chromadb_host, port=settings.chromadb_port
+    )
     logger.info("DocumentStore initialized")
 
     logger.info("MedWriter API started successfully")

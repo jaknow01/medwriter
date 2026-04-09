@@ -66,9 +66,13 @@ class Settings(BaseSettings):
     )
 
     # PDF / ChromaDB Configuration
-    chromadb_dir: str = Field(
-        default="/app/data/chromadb",
-        description="ChromaDB persistence directory for user PDF chunks"
+    chromadb_host: str = Field(
+        default="localhost",
+        description="ChromaDB server host"
+    )
+    chromadb_port: int = Field(
+        default=8000,
+        description="ChromaDB server port"
     )
     pdf_chunk_size: int = Field(
         default=1000,

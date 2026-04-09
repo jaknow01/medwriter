@@ -18,8 +18,8 @@ COLLECTION_NAME = "pdf_chunks"
 class DocumentStore:
     """Stores and retrieves PDF chunks using ChromaDB with hybrid search."""
 
-    def __init__(self, persist_dir: str = "/app/data/chromadb"):
-        self._client = chromadb.PersistentClient(path=persist_dir)
+    def __init__(self, host: str = "localhost", port: int = 8000):
+        self._client = chromadb.HttpClient(host=host, port=port)
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
         )
