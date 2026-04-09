@@ -11,6 +11,7 @@ from llama_index.core.llms import ChatMessage, MessageRole
 from src.worker.mcp_client import MCPClient
 from src.worker.agent import MedicalArticleAgent
 from src.worker.title_generator import TitleGenerator
+from src.worker.article_summarizer import ArticleSummarizer
 from src.config.settings import Settings
 from src.config.json_config import AppConfig
 from src.database import DatabaseManager, ConversationRepository, Message
@@ -40,6 +41,7 @@ class Worker:
         self.redis_manager: RedisManager | None = None
         self.job_queue: JobQueue | None = None
         self.title_generator: TitleGenerator | None = None
+        self.article_summarizer: ArticleSummarizer | None = None
         self.document_store: DocumentStore | None = None
 
         logger.info("Worker instance created")
@@ -115,6 +117,18 @@ class Worker:
                 temperature=title_cfg.temperature,
                 max_tokens=title_cfg.max_tokens,
             )
+
+            # Initialize article summarizer (if enabled)
+            summarizer_cfg = self.config.context.article_summarizer
+            if summarizer_cfg.enabled:
+                logger.info("Initializing article summarizer")
+                self.article_summarizer = ArticleSummarizer(
+                    llm_provider=agent_cfg.llm_provider,
+                    api_key=api_key,
+                    model_name=summarizer_cfg.model_name,
+                    temperature=summarizer_cfg.temperature,
+                    max_tokens=summarizer_cfg.max_tokens,
+                )
 
             self._initialized = True
             logger.info("Worker initialization complete")
@@ -234,13 +248,18 @@ class Worker:
                 chat_history=chat_history if chat_history else None,
             )
 
-            # Classify response and save to database
+            # Classify response, summarize if article, and save to database
             message_type = self._classify_response(response)
+            summary = None
+            if message_type == "article" and self.article_summarizer:
+                summary = await self.article_summarizer.summarize(response)
+
             await repo.add_message(
                 conv_id,
                 role="AI",
                 content=response,
                 message_type=message_type,
+                summary=summary,
             )
 
             # Generate title if this is the first message and no title exists
@@ -388,6 +407,7 @@ class Worker:
             self.agent = None
             self.job_queue = None
             self.title_generator = None
+            self.article_summarizer = None
             self.document_store = None
             self._initialized = False
 
