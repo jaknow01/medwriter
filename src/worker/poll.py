@@ -125,6 +125,9 @@ class WorkerPoller:
         """
         Process query with exponential backoff retry logic.
 
+        Handles only LLM API calls — PDF indexing must be done before
+        calling this method.
+
         Args:
             query: User query
             conv_id: Conversation UUID
@@ -143,7 +146,7 @@ class WorkerPoller:
                 response = await self.worker.process_query_with_context(
                     query=query,
                     conv_id=conv_id,
-                    save_user_message=False
+                    save_user_message=False,
                 )
                 return response
 
@@ -173,16 +176,22 @@ class WorkerPoller:
         job_id = job_data["conversation_id"]
         query = job_data["query"]
         conv_id = UUID(job_data["conversation_id"])
+        pdf_chunks = job_data.get("pdf_chunks")
 
         logger.info(f"Processing job {job_id} for conversation {conv_id}")
         logger.info(f"Query: {query[:100]}...")
 
         try:
-            # Process query with retry logic
+            # Index PDF chunks before LLM processing (one-time, not retried)
+            if pdf_chunks:
+                logger.info(f"Indexing {len(pdf_chunks)} PDF chunks for conv {conv_id}")
+                self.worker.index_pdf_chunks(conv_id, pdf_chunks)
+
+            # Process query with retry logic (only LLM calls are retried)
             response = await self._process_with_retry(
                 query=query,
                 conv_id=conv_id,
-                max_retries=3
+                max_retries=3,
             )
 
             logger.info(f"Job {job_id} processed successfully")

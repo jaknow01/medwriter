@@ -10,6 +10,7 @@ from src.worker.agent import MedicalArticleAgent
 from src.worker.title_generator import TitleGenerator
 from src.config.settings import Settings
 from src.database import DatabaseManager, ConversationRepository, Message
+from src.pdf.store import DocumentStore
 from src.redis import RedisManager, JobQueue
 
 
@@ -33,6 +34,7 @@ class Worker:
         self.redis_manager: RedisManager | None = None
         self.job_queue: JobQueue | None = None
         self.title_generator: TitleGenerator | None = None
+        self.document_store: DocumentStore | None = None
 
         logger.info("Worker instance created")
 
@@ -90,6 +92,10 @@ class Worker:
             await self.redis_manager.connect()
             self.job_queue = JobQueue(self.redis_manager.client)
 
+            # Initialize document store for PDF chunks
+            logger.info(f"Initializing DocumentStore at {self.settings.chromadb_dir}")
+            self.document_store = DocumentStore(self.settings.chromadb_dir)
+
             # Initialize title generator
             logger.info("Initializing title generator")
             self.title_generator = TitleGenerator(
@@ -133,11 +139,58 @@ class Worker:
             logger.error(f"Error processing query: {e}")
             raise
 
+    def index_pdf_chunks(self, conv_id: UUID, chunks: list[dict]) -> None:
+        """Index PDF chunks into ChromaDB grouped by filename.
+
+        Args:
+            conv_id: Conversation UUID
+            chunks: List of {"text": str, "filename": str}
+        """
+        if not self.document_store:
+            raise RuntimeError("DocumentStore not initialized. Call initialize() first.")
+        # Group chunks by filename
+        by_file: dict[str, list[str]] = {}
+        for chunk in chunks:
+            by_file.setdefault(chunk["filename"], []).append(chunk["text"])
+
+        for filename, texts in by_file.items():
+            self.document_store.add_chunks(conv_id, texts, filename)
+            logger.info(f"Indexed {len(texts)} chunks from '{filename}' for conv {conv_id}")
+
+    def _get_pdf_context(self, conv_id: UUID, query: str) -> str:
+        """Retrieve relevant PDF chunks and format as context.
+
+        Args:
+            conv_id: Conversation UUID
+            query: User query for similarity search
+
+        Returns:
+            Formatted context string, or empty string if no documents
+        """
+        if not self.document_store.has_documents(conv_id):
+            return ""
+
+        results = self.document_store.query(
+            conv_id, query, top_k=self.settings.pdf_top_k
+        )
+
+        if not results:
+            return ""
+
+        formatted = "\n\n---\n\n".join(results)
+        return f"Relevant context from uploaded PDF documents:\n\n{formatted}"
+
     async def process_query_with_context(
-        self, query: str, conv_id: UUID, save_user_message: bool = True
+        self,
+        query: str,
+        conv_id: UUID,
+        save_user_message: bool = True,
     ) -> str:
         """
         Process query with conversation history from database.
+
+        PDF chunks should be indexed separately via index_pdf_chunks()
+        before calling this method.
 
         Args:
             query: User query
@@ -164,7 +217,6 @@ class Worker:
             if not conversation:
                 logger.info(f"Creating new conversation {conv_id}")
                 conversation = await repo.create_conversation(conv_id=conv_id)
-                # conv_id stays the same (no need to reassign)
 
             # Get previous messages for context
             messages = await repo.get_messages(conv_id)
@@ -177,16 +229,27 @@ class Worker:
                 await repo.add_message(conv_id, role="User", content=query)
                 logger.debug("Saved user message to database")
 
+            # Retrieve relevant PDF context if documents exist
+            pdf_context = ""
+            if self.document_store:
+                pdf_context = self._get_pdf_context(conv_id, query)
+
             # Process query with agent (with context)
-            full_query = f"{context}\n\nUser: {query}" if context else query
+            full_query = query
+            if context:
+                full_query = f"{context}\n\nUser: {query}"
+            if pdf_context:
+                full_query = f"{pdf_context}\n\n{full_query}"
+
             logger.info(f"Processing with {len(messages)} previous messages as context")
+            if pdf_context:
+                logger.info("PDF context included in query")
             response = await self.agent.chat(full_query)
 
             # Add AI response to database
             await repo.add_message(conv_id, role="AI", content=response)
 
             # Generate title if this is the first message and no title exists
-            # Note: messages may have 0 (worker saves user msg) or 1 (API saved user msg) message
             if not conversation.title and len(messages) <= 1:
                 logger.info("Generating title for new conversation")
                 title = await self.title_generator.generate_title(query)
@@ -314,6 +377,7 @@ class Worker:
             self.agent = None
             self.job_queue = None
             self.title_generator = None
+            self.document_store = None
             self._initialized = False
 
             logger.info("Worker shutdown complete")
