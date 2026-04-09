@@ -25,6 +25,8 @@ class MessageResponse(BaseModel):
     mess_id: UUID
     role: str
     content: str
+    message_type: str = "simple"
+    summary: str | None = None
     timestamp: datetime
 
     class Config:

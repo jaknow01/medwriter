@@ -1,6 +1,7 @@
 """Main worker module orchestrating agent and MCP client."""
 
 import asyncio
+import re
 from typing import List
 from uuid import UUID
 from loguru import logger
@@ -233,8 +234,14 @@ class Worker:
                 chat_history=chat_history if chat_history else None,
             )
 
-            # Add AI response to database
-            await repo.add_message(conv_id, role="AI", content=response)
+            # Classify response and save to database
+            message_type = self._classify_response(response)
+            await repo.add_message(
+                conv_id,
+                role="AI",
+                content=response,
+                message_type=message_type,
+            )
 
             # Generate title if this is the first message and no title exists
             if not conversation.title and len(messages) <= 1:
@@ -245,9 +252,50 @@ class Worker:
             logger.info("Query with context processed successfully")
             return response
 
+    def _classify_response(self, response: str) -> str:
+        """Classify agent response as 'simple' or 'article'.
+
+        Uses heuristics based on article structure defined in the system prompt:
+        articles have 800-1500 words, section headings, and numbered references.
+        A long but unstructured response (e.g. detailed explanation) stays 'simple'.
+
+        Args:
+            response: Agent response text
+
+        Returns:
+            "simple" or "article"
+        """
+        word_count = len(response.split())
+        threshold = self.config.context.article_summarizer.word_count_threshold
+
+        # Must exceed word count threshold
+        if word_count < threshold:
+            return "simple"
+
+        # Count numbered references like [1], [2], etc.
+        references = re.findall(r"\[\d+\]", response)
+        has_references = len(set(references)) >= 1
+
+        # Count section headings (markdown ## or bold **Heading**)
+        heading_patterns = re.findall(r"(?m)^#{1,3}\s+.+|^\*\*[A-Z].+\*\*$", response)
+        has_headings = len(heading_patterns) >= 2
+
+        # Article = long + has both references and section structure
+        if has_references and has_headings:
+            logger.info(
+                f"Classified as article: {word_count} words, "
+                f"{len(set(references))} refs, {len(heading_patterns)} headings"
+            )
+            return "article"
+
+        return "simple"
+
     def _build_chat_history(self, messages: List[Message]) -> List[ChatMessage]:
         """
         Build structured ChatMessage list from database messages.
+
+        For articles with a summary, uses the summary instead of full content
+        to keep the context window compact.
 
         Args:
             messages: List of Message objects from database
@@ -266,7 +314,13 @@ class Worker:
             if role is None:
                 logger.warning(f"Unknown message role '{msg.role}', skipping")
                 continue
-            chat_history.append(ChatMessage(role=role, content=msg.content))
+
+            # Use summary for articles if available
+            content = msg.content
+            if msg.message_type == "article" and msg.summary:
+                content = msg.summary
+
+            chat_history.append(ChatMessage(role=role, content=content))
 
         return chat_history
 

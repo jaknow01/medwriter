@@ -41,6 +41,8 @@ class Message(Base):
     )
     role = Column(String(20), nullable=False)  # "User" or "AI"
     content = Column(Text, nullable=False)
+    message_type = Column(String(20), default="simple")  # "simple" or "article"
+    summary = Column(Text, nullable=True)  # Article summary for context window
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")

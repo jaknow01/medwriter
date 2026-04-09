@@ -46,11 +46,22 @@ class TitleGeneratorConfig(BaseModel):
     max_tokens: int = Field(default=50, description="Max tokens for title")
 
 
+class ArticleSummarizerConfig(BaseModel):
+    """Article summarizer configuration (for future use)."""
+
+    enabled: bool = Field(default=False, description="Enable article summarization")
+    model_name: str = Field(default="gpt-4o-mini", description="Model for summarization")
+    temperature: float = Field(default=0.3, description="Sampling temperature")
+    max_tokens: int = Field(default=200, description="Max tokens for summary")
+    word_count_threshold: int = Field(default=500, description="Min word count to classify as article")
+
+
 class ContextConfig(BaseModel):
     """Conversation context management configuration."""
 
     max_messages: int = Field(default=20, description="Max messages in sliding window")
     title_generator: TitleGeneratorConfig = Field(default_factory=TitleGeneratorConfig)
+    article_summarizer: ArticleSummarizerConfig = Field(default_factory=ArticleSummarizerConfig)
 
 
 class AppConfig(BaseModel):

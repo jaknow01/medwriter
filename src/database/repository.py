@@ -79,7 +79,12 @@ class ConversationRepository:
             logger.warning(f"Cannot update title: conversation {conv_id} not found")
 
     async def add_message(
-        self, conv_id: UUID, role: str, content: str
+        self,
+        conv_id: UUID,
+        role: str,
+        content: str,
+        message_type: str = "simple",
+        summary: str | None = None,
     ) -> Message:
         """Add message to conversation.
 
@@ -87,14 +92,22 @@ class ConversationRepository:
             conv_id: Conversation UUID
             role: Message role ("User" or "AI")
             content: Message content
+            message_type: "simple" or "article"
+            summary: Article summary for context window (None for simple messages)
 
         Returns:
             Created Message object
         """
-        msg = Message(conv_id=conv_id, role=role, content=content)
+        msg = Message(
+            conv_id=conv_id,
+            role=role,
+            content=content,
+            message_type=message_type,
+            summary=summary,
+        )
         self.session.add(msg)
         await self.session.flush()
-        logger.info(f"Added {role} message to conversation {conv_id}")
+        logger.info(f"Added {role} message ({message_type}) to conversation {conv_id}")
         return msg
 
     async def get_messages(

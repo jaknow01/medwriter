@@ -8,6 +8,7 @@ from src.config.json_config import (
     ChunkerConfig,
     ContextConfig,
     TitleGeneratorConfig,
+    ArticleSummarizerConfig,
     app_config,
     load_config,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "ChunkerConfig",
     "ContextConfig",
     "TitleGeneratorConfig",
+    "ArticleSummarizerConfig",
     "app_config",
     "load_config",
 ]
