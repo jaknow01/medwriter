@@ -1,18 +1,21 @@
 """Message endpoints."""
 
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from loguru import logger
 
 from src.api.dependencies import get_repository, get_job_queue
 from src.api.schemas import (
-    MessageCreate,
     MessageSubmitResponse,
     JobStatusResponse,
     MessageResponse,
 )
+from src.config.settings import settings
 from src.database import ConversationRepository
+from src.pdf.processor import PDFProcessor
 from src.redis import JobQueue
+
+MAX_PDF_SIZE = 10 * 1024 * 1024  # 10 MB
 
 router = APIRouter()
 
@@ -70,31 +73,59 @@ async def get_messages(
 )
 async def send_message(
     conv_id: UUID,
-    message: MessageCreate,
+    content: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
     repo: ConversationRepository = Depends(get_repository),
     job_queue: JobQueue = Depends(get_job_queue),
 ):
     """
-    Send a message to a conversation.
+    Send a message to a conversation, optionally with PDF attachments.
 
-    This endpoint:
-    1. Saves the user message to the database
-    2. Creates a job in Redis for the worker to process
-    3. Returns job information for status polling
+    Accepts multipart/form-data with text content and optional PDF files.
+    Each PDF is validated (type, size) and chunked for later indexing.
 
     Args:
         conv_id: Conversation UUID
-        message: Message content
+        content: Message text
+        files: Optional PDF file uploads (max 10 MB each)
         repo: Conversation repository
         job_queue: Job queue
 
     Returns:
         Message ID and job ID for status tracking
-
-    Raises:
-        HTTPException: If conversation not found
     """
     logger.info(f"Sending message to conversation {conv_id}")
+
+    # Validate uploaded files
+    for f in files:
+        if f.content_type != "application/pdf":
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{f.filename}' is not a PDF",
+            )
+        file_bytes = await f.read()
+        if len(file_bytes) > MAX_PDF_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{f.filename}' exceeds 10 MB limit",
+            )
+        await f.seek(0)
+
+    # Process PDFs into chunks
+    pdf_chunks: list[dict] | None = None
+    if files:
+        processor = PDFProcessor(
+            chunk_size=settings.pdf_chunk_size,
+            chunk_overlap=settings.pdf_chunk_overlap,
+        )
+        pdf_chunks = []
+        for f in files:
+            file_bytes = await f.read()
+            chunks = processor.process_pdf(file_bytes)
+            pdf_chunks.extend(
+                {"text": chunk, "filename": f.filename} for chunk in chunks
+            )
+            logger.info(f"Processed '{f.filename}': {len(chunks)} chunks")
 
     # Check if conversation exists, create if not
     conversation = await repo.get_conversation(conv_id)
@@ -106,12 +137,12 @@ async def send_message(
     user_message = await repo.add_message(
         conv_id,
         role="User",
-        content=message.content
+        content=content,
     )
     logger.info(f"Saved user message {user_message.mess_id} to database")
 
     # Create job in Redis
-    job_id = await job_queue.create_job(conv_id, message.content)
+    job_id = await job_queue.create_job(conv_id, content, pdf_chunks=pdf_chunks)
     logger.info(f"Created job {job_id} in Redis")
 
     return MessageSubmitResponse(

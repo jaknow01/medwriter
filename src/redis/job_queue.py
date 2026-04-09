@@ -20,12 +20,18 @@ class JobQueue:
         self.job_prefix = "job:"
         self.lock_timeout = 300  # 5 minutes in seconds
 
-    async def create_job(self, conv_id: UUID, query: str) -> str:
+    async def create_job(
+        self,
+        conv_id: UUID,
+        query: str,
+        pdf_chunks: list[dict] | None = None,
+    ) -> str:
         """Create a new job in Redis.
 
         Args:
             conv_id: Conversation UUID
             query: User query
+            pdf_chunks: Optional list of PDF chunks, each {"text": str, "filename": str}
 
         Returns:
             Job ID (same as conversation ID)
@@ -37,6 +43,9 @@ class JobQueue:
             "status": "Pending",
             "result": "Pending",
         }
+
+        if pdf_chunks:
+            job_data["pdf_chunks"] = pdf_chunks
 
         await self.redis.set(
             f"{self.job_prefix}{job_id}",
