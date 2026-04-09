@@ -10,6 +10,7 @@ from loguru import logger
 
 from src.config.settings import Settings
 from src.database import DatabaseManager
+from src.pdf.store import DocumentStore
 from src.redis import RedisManager, JobQueue
 from src.api import dependencies
 
@@ -37,12 +38,19 @@ async def lifespan(app: FastAPI):
     dependencies.job_queue = JobQueue(dependencies.redis_manager.client)
     logger.info("Redis initialized")
 
+    # Initialize DocumentStore for PDF chunks
+    logger.info(f"Initializing DocumentStore at {settings.chromadb_dir}")
+    dependencies.document_store = DocumentStore(settings.chromadb_dir)
+    logger.info("DocumentStore initialized")
+
     logger.info("MedWriter API started successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down MedWriter API...")
+
+    dependencies.document_store = None
 
     if dependencies.db_manager:
         await dependencies.db_manager.close()

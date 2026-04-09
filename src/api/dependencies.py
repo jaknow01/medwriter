@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import Settings
 from src.database import DatabaseManager, ConversationRepository
+from src.pdf.store import DocumentStore
 from src.redis import RedisManager, JobQueue
 
 
@@ -13,6 +14,7 @@ from src.redis import RedisManager, JobQueue
 db_manager: DatabaseManager | None = None
 redis_manager: RedisManager | None = None
 job_queue: JobQueue | None = None
+document_store: DocumentStore | None = None
 
 
 def get_settings() -> Settings:
@@ -62,3 +64,18 @@ def get_job_queue() -> JobQueue:
     if job_queue is None:
         raise RuntimeError("Redis not initialized")
     return job_queue
+
+
+def get_document_store() -> DocumentStore:
+    """
+    Get document store.
+
+    Returns:
+        DocumentStore instance
+
+    Raises:
+        RuntimeError: If DocumentStore not initialized
+    """
+    if document_store is None:
+        raise RuntimeError("DocumentStore not initialized")
+    return document_store

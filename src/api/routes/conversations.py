@@ -6,7 +6,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from src.api.dependencies import get_db_session, get_repository
+from src.api.dependencies import get_db_session, get_repository, get_document_store
 from src.api.schemas import (
     ConversationResponse,
     ConversationDetailResponse,
@@ -15,6 +15,7 @@ from src.api.schemas import (
 )
 from src.database import ConversationRepository
 from src.database.models import Conversation, Message
+from src.pdf.store import DocumentStore
 
 router = APIRouter()
 
@@ -157,13 +158,17 @@ async def create_conversation(
 async def delete_conversation(
     conv_id: UUID,
     session: AsyncSession = Depends(get_db_session),
+    doc_store: DocumentStore = Depends(get_document_store),
 ):
     """
     Delete a conversation and all its messages.
 
+    Also removes any indexed PDF chunks from ChromaDB.
+
     Args:
         conv_id: Conversation UUID
         session: Database session
+        doc_store: Document store for PDF chunk cleanup
 
     Raises:
         HTTPException: If conversation not found
@@ -183,5 +188,8 @@ async def delete_conversation(
     # Delete conversation (messages cascade delete automatically)
     await session.delete(conversation)
     await session.commit()
+
+    # Clean up indexed PDF chunks from ChromaDB
+    doc_store.delete_by_conv_id(conv_id)
 
     logger.info(f"Deleted conversation {conv_id}")
