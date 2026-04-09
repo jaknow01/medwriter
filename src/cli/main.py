@@ -183,11 +183,9 @@ in the same conversation are used as context for better responses.
             console.print(f"[dim]Conversation ID: {self.conversation_id}[/dim]")
 
         elif command == "/clear":
-            if self.worker:
-                self.worker.reset_conversation()
-                console.print("[green]✓ Conversation history cleared[/green]")
-            else:
-                console.print("[red]Worker not initialized[/red]")
+            self.conversation_id = uuid4()
+            console.print(f"[green]✓ Started new conversation[/green]")
+            console.print(f"[dim]Conversation ID: {self.conversation_id}[/dim]")
 
         elif command.startswith("/model"):
             parts = command.split()

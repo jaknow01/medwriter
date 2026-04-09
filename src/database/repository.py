@@ -97,20 +97,40 @@ class ConversationRepository:
         logger.info(f"Added {role} message to conversation {conv_id}")
         return msg
 
-    async def get_messages(self, conv_id: UUID) -> List[Message]:
-        """Get all messages for a conversation, ordered by timestamp.
+    async def get_messages(
+        self, conv_id: UUID, limit: int | None = None
+    ) -> List[Message]:
+        """Get messages for a conversation, ordered by timestamp.
 
         Args:
             conv_id: Conversation UUID
+            limit: If set, return only the most recent N messages
 
         Returns:
-            List of Message objects
+            List of Message objects in chronological order
         """
-        result = await self.session.execute(
-            select(Message)
-            .where(Message.conv_id == conv_id)
-            .order_by(Message.timestamp)
-        )
+        if limit is not None and limit > 0:
+            # Subquery: get the last N messages (newest first)
+            subq = (
+                select(Message.mess_id)
+                .where(Message.conv_id == conv_id)
+                .order_by(Message.timestamp.desc())
+                .limit(limit)
+                .subquery()
+            )
+            # Outer query: re-order chronologically
+            result = await self.session.execute(
+                select(Message)
+                .where(Message.mess_id.in_(select(subq.c.mess_id)))
+                .order_by(Message.timestamp)
+            )
+        else:
+            result = await self.session.execute(
+                select(Message)
+                .where(Message.conv_id == conv_id)
+                .order_by(Message.timestamp)
+            )
+
         messages = list(result.scalars().all())
         logger.debug(f"Retrieved {len(messages)} messages for conversation {conv_id}")
         return messages

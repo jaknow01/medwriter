@@ -118,39 +118,34 @@ class MedicalArticleAgent:
             verbose=True,
         )
 
-        # Chat history
-        self.chat_history: list[ChatMessage] = []
-
         logger.info("Agent initialized successfully")
 
-    async def chat(self, message: str) -> str:
+    async def chat(
+        self,
+        message: str,
+        chat_history: list[ChatMessage] | None = None,
+    ) -> str:
         """
         Process a user message and return agent response.
 
         Args:
-            message: User message
+            message: User message (current query)
+            chat_history: Previous conversation as structured ChatMessage list
 
         Returns:
             Agent response
         """
         logger.info(f"Processing user message: {message[:100]}...")
+        if chat_history:
+            logger.info(f"With {len(chat_history)} messages of chat history")
 
         try:
-            # Add user message to history
-            self.chat_history.append(
-                ChatMessage(role=MessageRole.USER, content=message)
+            result = await self.agent.run(
+                user_msg=message,
+                chat_history=chat_history,
             )
 
-            # Run agent workflow
-            result = await self.agent.run(user_msg=message)
-
-            # Extract response text
             response_text = str(result.get("response", result))
-
-            # Add assistant response to history
-            self.chat_history.append(
-                ChatMessage(role=MessageRole.ASSISTANT, content=response_text)
-            )
 
             logger.info("Agent response generated successfully")
             logger.debug(f"Response: {response_text[:200]}...")
@@ -161,12 +156,17 @@ class MedicalArticleAgent:
             logger.error(f"Error processing message: {e}")
             raise
 
-    async def stream_chat(self, message: str):
+    async def stream_chat(
+        self,
+        message: str,
+        chat_history: list[ChatMessage] | None = None,
+    ):
         """
         Process a user message and stream the response.
 
         Args:
             message: User message
+            chat_history: Previous conversation as structured ChatMessage list
 
         Yields:
             Response chunks
@@ -174,38 +174,21 @@ class MedicalArticleAgent:
         logger.info(f"Streaming response for message: {message[:100]}...")
 
         try:
-            # Add user message to history
-            self.chat_history.append(
-                ChatMessage(role=MessageRole.USER, content=message)
-            )
-
             # For now, run non-streaming and yield the result
             # (streaming in workflow agents requires async iteration)
-            result = await self.agent.run(user_msg=message)
+            result = await self.agent.run(
+                user_msg=message,
+                chat_history=chat_history,
+            )
             response_text = str(result.get("response", result))
 
-            # Yield the response (for now, as single chunk)
             yield response_text
-
-            # Add complete response to history
-            self.chat_history.append(
-                ChatMessage(role=MessageRole.ASSISTANT, content=response_text)
-            )
 
             logger.info("Streaming response completed")
 
         except Exception as e:
             logger.error(f"Error streaming message: {e}")
             raise
-
-    def reset_chat_history(self) -> None:
-        """Clear the chat history."""
-        logger.info("Resetting chat history")
-        self.chat_history = []
-
-    def get_chat_history(self) -> list[ChatMessage]:
-        """Get the current chat history."""
-        return self.chat_history
 
     def switch_llm(
         self,

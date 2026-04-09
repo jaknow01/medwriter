@@ -5,6 +5,8 @@ from typing import List
 from uuid import UUID
 from loguru import logger
 
+from llama_index.core.llms import ChatMessage, MessageRole
+
 from src.worker.mcp_client import MCPClient
 from src.worker.agent import MedicalArticleAgent
 from src.worker.title_generator import TitleGenerator
@@ -121,33 +123,6 @@ class Worker:
             await self.shutdown()
             raise
 
-    async def process_query(self, query: str) -> str:
-        """
-        Process a user query and return response (without conversation context).
-
-        Args:
-            query: User query
-
-        Returns:
-            Agent response
-
-        Raises:
-            RuntimeError: If worker not initialized
-        """
-        if not self._initialized or not self.agent:
-            raise RuntimeError("Worker not initialized. Call initialize() first.")
-
-        logger.info(f"Processing query: {query[:100]}...")
-
-        try:
-            response = await self.agent.chat(query)
-            logger.info("Query processed successfully")
-            return response
-
-        except Exception as e:
-            logger.error(f"Error processing query: {e}")
-            raise
-
     def index_pdf_chunks(self, conv_id: UUID, chunks: list[dict]) -> None:
         """Index PDF chunks into ChromaDB grouped by filename.
 
@@ -227,33 +202,36 @@ class Worker:
                 logger.info(f"Creating new conversation {conv_id}")
                 conversation = await repo.create_conversation(conv_id=conv_id)
 
-            # Get previous messages for context
-            messages = await repo.get_messages(conv_id)
+            # Get previous messages for context (with sliding window limit)
+            max_msgs = self.config.context.max_messages
+            messages = await repo.get_messages(conv_id, limit=max_msgs)
 
-            # Build context from previous messages
-            context = self._build_context(messages)
+            # API saves the user message before creating the job, so it's
+            # already in the list. Remove it — it goes as user_msg to agent.run().
+            if not save_user_message and messages and messages[-1].role == "User":
+                messages = messages[:-1]
+
+            # Build structured chat history
+            chat_history = self._build_chat_history(messages)
 
             # Add user message to database (if not already saved by API)
             if save_user_message:
                 await repo.add_message(conv_id, role="User", content=query)
                 logger.debug("Saved user message to database")
 
-            # Retrieve relevant PDF context if documents exist
-            pdf_context = ""
+            # Build user message with optional PDF context
+            user_msg = query
             if self.document_store:
                 pdf_context = self._get_pdf_context(conv_id, query)
+                if pdf_context:
+                    user_msg = f"{pdf_context}\n\n{query}"
+                    logger.info("PDF context included in query")
 
-            # Process query with agent (with context)
-            full_query = query
-            if context:
-                full_query = f"{context}\n\nUser: {query}"
-            if pdf_context:
-                full_query = f"{pdf_context}\n\n{full_query}"
-
-            logger.info(f"Processing with {len(messages)} previous messages as context")
-            if pdf_context:
-                logger.info("PDF context included in query")
-            response = await self.agent.chat(full_query)
+            logger.info(f"Processing with {len(chat_history)} history messages")
+            response = await self.agent.chat(
+                message=user_msg,
+                chat_history=chat_history if chat_history else None,
+            )
 
             # Add AI response to database
             await repo.add_message(conv_id, role="AI", content=response)
@@ -267,60 +245,30 @@ class Worker:
             logger.info("Query with context processed successfully")
             return response
 
-    def _build_context(self, messages: List[Message]) -> str:
+    def _build_chat_history(self, messages: List[Message]) -> List[ChatMessage]:
         """
-        Build context string from previous messages.
+        Build structured ChatMessage list from database messages.
 
         Args:
-            messages: List of previous messages
+            messages: List of Message objects from database
 
         Returns:
-            Context string
+            List of ChatMessage with proper roles
         """
-        if not messages:
-            return ""
+        ROLE_MAP = {
+            "User": MessageRole.USER,
+            "AI": MessageRole.ASSISTANT,
+        }
 
-        context_parts = ["Previous conversation:"]
+        chat_history = []
         for msg in messages:
-            context_parts.append(f"{msg.role}: {msg.content}")
+            role = ROLE_MAP.get(msg.role)
+            if role is None:
+                logger.warning(f"Unknown message role '{msg.role}', skipping")
+                continue
+            chat_history.append(ChatMessage(role=role, content=msg.content))
 
-        return "\n".join(context_parts)
-
-    async def stream_query(self, query: str):
-        """
-        Process a user query and stream response.
-
-        Args:
-            query: User query
-
-        Yields:
-            Response chunks
-
-        Raises:
-            RuntimeError: If worker not initialized
-        """
-        if not self._initialized or not self.agent:
-            raise RuntimeError("Worker not initialized. Call initialize() first.")
-
-        logger.info(f"Streaming response for query: {query[:100]}...")
-
-        try:
-            async for chunk in self.agent.stream_chat(query):
-                yield chunk
-            logger.info("Streaming query processed successfully")
-
-        except Exception as e:
-            logger.error(f"Error streaming query: {e}")
-            raise
-
-    def reset_conversation(self) -> None:
-        """Reset the conversation history."""
-        if not self.agent:
-            logger.warning("Cannot reset conversation - agent not initialized")
-            return
-
-        logger.info("Resetting conversation history")
-        self.agent.reset_chat_history()
+        return chat_history
 
     async def switch_llm_provider(
         self,

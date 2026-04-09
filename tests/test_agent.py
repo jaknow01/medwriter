@@ -48,7 +48,6 @@ def test_agent_initialization_openai(mock_tools):
     assert agent.model_name == "gpt-3.5-turbo"
     assert len(agent.tools) == 2
     assert agent.agent is not None
-    assert len(agent.chat_history) == 0
 
 
 def test_agent_initialization_anthropic(mock_tools):
@@ -75,43 +74,6 @@ def test_agent_initialization_invalid_provider(mock_tools):
             model_name="test",
             api_key="test-key",
         )
-
-
-def test_reset_chat_history(mock_tools):
-    """Test resetting chat history."""
-    agent = MedicalArticleAgent(
-        tools=mock_tools,
-        llm_provider="openai",
-        model_name="gpt-3.5-turbo",
-        api_key="test-key",
-    )
-
-    # Manually add some history
-    from llama_index.core.llms import ChatMessage, MessageRole
-
-    agent.chat_history.append(
-        ChatMessage(role=MessageRole.USER, content="test")
-    )
-
-    assert len(agent.chat_history) == 1
-
-    agent.reset_chat_history()
-
-    assert len(agent.chat_history) == 0
-
-
-def test_get_chat_history(mock_tools):
-    """Test getting chat history."""
-    agent = MedicalArticleAgent(
-        tools=mock_tools,
-        llm_provider="openai",
-        model_name="gpt-3.5-turbo",
-        api_key="test-key",
-    )
-
-    history = agent.get_chat_history()
-    assert isinstance(history, list)
-    assert len(history) == 0
 
 
 def test_switch_llm_openai_to_anthropic(mock_tools):
