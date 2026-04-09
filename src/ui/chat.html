@@ -26,7 +26,18 @@
             </div>
 
             <div class="chat-input-container">
+                <div id="selectedFiles" class="selected-files" style="display:none;"></div>
                 <div id="chatForm" class="chat-input-form">
+                    <input
+                        type="file"
+                        id="fileInput"
+                        accept=".pdf"
+                        multiple
+                        hidden
+                    >
+                    <button type="button" id="attachBtn" class="attach-btn" title="Dodaj PDF">
+                        📎
+                    </button>
                     <textarea
                         id="messageInput"
                         class="chat-input"
@@ -64,9 +75,35 @@
         const messageInput = document.getElementById('messageInput');
         const chatForm = document.getElementById('chatForm');
         const sendBtn = document.getElementById('sendBtn');
+        const attachBtn = document.getElementById('attachBtn');
+        const fileInput = document.getElementById('fileInput');
+        const selectedFilesDiv = document.getElementById('selectedFiles');
         const conversationTitle = document.getElementById('conversationTitle');
 
         let isProcessing = false;
+
+        // File attachment handling
+        attachBtn.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                const names = Array.from(fileInput.files).map(f => f.name);
+                selectedFilesDiv.innerHTML = names
+                    .map(name => `<span class="file-tag">${escapeHtml(name)} <button onclick="removeFile(this)" class="file-remove">&times;</button></span>`)
+                    .join('');
+                selectedFilesDiv.style.display = 'flex';
+            } else {
+                selectedFilesDiv.style.display = 'none';
+                selectedFilesDiv.innerHTML = '';
+            }
+        });
+
+        function removeFile(btn) {
+            // Cannot selectively remove from FileList, so clear all
+            fileInput.value = '';
+            selectedFilesDiv.style.display = 'none';
+            selectedFilesDiv.innerHTML = '';
+        }
 
         // Load conversation and messages
         async function loadConversation() {
@@ -168,7 +205,10 @@
             sendBtn.disabled = true;
 
             try {
-                // Clear input
+                // Grab files before clearing
+                const files = fileInput.files;
+
+                // Clear inputs
                 messageInput.value = '';
 
                 // Add user message to UI
@@ -177,8 +217,13 @@
                 // Show loading
                 const loadingMsg = appendLoadingMessage();
 
-                // Send message to API (creates job)
-                const response = await MedWriterAPI.sendMessage(conversationId, message);
+                // Send message to API with optional files (creates job)
+                const response = await MedWriterAPI.sendMessage(conversationId, message, files);
+
+                // Clear file input after successful send
+                fileInput.value = '';
+                selectedFilesDiv.style.display = 'none';
+                selectedFilesDiv.innerHTML = '';
 
                 // Poll for job completion
                 await MedWriterAPI.pollJobStatus(

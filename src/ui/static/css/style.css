@@ -374,6 +374,50 @@ body {
     opacity: 0.5;
 }
 
+/* File attachment */
+.attach-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background 0.2s;
+}
+
+.attach-btn:hover {
+    background: var(--background);
+}
+
+.selected-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 0 8px;
+}
+
+.file-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.file-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--danger-color);
+    padding: 0 2px;
+    line-height: 1;
+}
+
 /* Loading State */
 .loading {
     text-align: center;

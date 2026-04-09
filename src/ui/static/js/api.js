@@ -82,19 +82,25 @@ class MedWriterAPI {
     }
 
     /**
-     * Send message (creates job)
+     * Send message with optional PDF files (creates job)
+     * @param {string} convId - Conversation ID
+     * @param {string} content - Message text
+     * @param {FileList|Array} files - Optional PDF files
      */
-    static async sendMessage(convId, content) {
+    static async sendMessage(convId, content, files = []) {
         if (!convId || convId === 'null' || convId === 'undefined') {
             throw new Error('Invalid conversation ID');
         }
 
+        const formData = new FormData();
+        formData.append('content', content);
+        for (const file of files) {
+            formData.append('files', file);
+        }
+
         const response = await fetch(`${API_BASE}/conversations/${convId}/messages`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ content })
+            body: formData,
         });
 
         if (!response.ok) {
