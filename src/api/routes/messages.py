@@ -10,7 +10,7 @@ from src.api.schemas import (
     JobStatusResponse,
     MessageResponse,
 )
-from src.config.settings import settings
+from src.config.json_config import app_config
 from src.database import ConversationRepository
 from src.pdf.processor import PDFProcessor
 from src.redis import JobQueue
@@ -114,10 +114,7 @@ async def send_message(
     # Process PDFs into chunks
     pdf_chunks: list[dict] | None = None
     if files:
-        processor = PDFProcessor(
-            chunk_size=settings.pdf_chunk_size,
-            chunk_overlap=settings.pdf_chunk_overlap,
-        )
+        processor = PDFProcessor(chunker_config=app_config.pdf.chunker)
         pdf_chunks = []
         for f in files:
             file_bytes = await f.read()

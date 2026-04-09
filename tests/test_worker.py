@@ -5,25 +5,35 @@ from unittest.mock import Mock, patch, AsyncMock
 
 from src.worker.worker import Worker
 from src.config.settings import Settings
+from src.config.json_config import AppConfig, AgentConfig
 
 
 @pytest.fixture
 def mock_settings():
     """Fixture for mock settings."""
     settings = Settings(
-        llm_provider="openai",
         openai_api_key="test-openai-key",
         anthropic_api_key="test-anthropic-key",
-        model_name="gpt-3.5-turbo",
         mcp_server_url="http://localhost:8000",
     )
     return settings
 
 
 @pytest.fixture
-def worker(mock_settings):
+def mock_config():
+    """Fixture for mock app config."""
+    return AppConfig(
+        agent=AgentConfig(
+            llm_provider="openai",
+            model_name="gpt-3.5-turbo",
+        ),
+    )
+
+
+@pytest.fixture
+def worker(mock_settings, mock_config):
     """Fixture for worker instance."""
-    return Worker(mock_settings)
+    return Worker(mock_settings, mock_config)
 
 
 def test_worker_initialization(worker, mock_settings):
@@ -172,8 +182,8 @@ async def test_worker_switch_llm_provider(worker):
         await worker.initialize()
         await worker.switch_llm_provider("anthropic", "claude-3-opus-20240229")
 
-        assert worker.settings.llm_provider == "anthropic"
-        assert worker.settings.model_name == "claude-3-opus-20240229"
+        assert worker.config.agent.llm_provider == "anthropic"
+        assert worker.config.agent.model_name == "claude-3-opus-20240229"
         mock_agent.switch_llm.assert_called_once()
 
 
@@ -214,10 +224,10 @@ async def test_worker_shutdown(worker):
 async def test_worker_context_manager():
     """Test worker as async context manager."""
     mock_settings = Settings(
-        llm_provider="openai",
         openai_api_key="test-key",
         mcp_server_url="http://localhost:8000",
     )
+    mock_config = AppConfig()
 
     with patch("src.worker.worker.MCPClient") as mock_mcp_class, \
          patch("src.worker.worker.MedicalArticleAgent") as mock_agent_class:
@@ -231,7 +241,7 @@ async def test_worker_context_manager():
         mock_agent = Mock()
         mock_agent_class.return_value = mock_agent
 
-        async with Worker(mock_settings) as worker:
+        async with Worker(mock_settings, mock_config) as worker:
             assert worker.is_initialized()
 
         # Should be shut down after context

@@ -1,7 +1,7 @@
 """Main worker module orchestrating agent and MCP client."""
 
 import asyncio
-from typing import Literal, List
+from typing import List
 from uuid import UUID
 from loguru import logger
 
@@ -9,6 +9,7 @@ from src.worker.mcp_client import MCPClient
 from src.worker.agent import MedicalArticleAgent
 from src.worker.title_generator import TitleGenerator
 from src.config.settings import Settings
+from src.config.json_config import AppConfig
 from src.database import DatabaseManager, ConversationRepository, Message
 from src.pdf.store import DocumentStore
 from src.redis import RedisManager, JobQueue
@@ -17,14 +18,16 @@ from src.redis import RedisManager, JobQueue
 class Worker:
     """Worker that orchestrates MCP client and LlamaIndex agent."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, config: AppConfig):
         """
         Initialize worker.
 
         Args:
-            settings: Application settings
+            settings: Infrastructure settings (secrets, URLs)
+            config: Application config (models, chunking, context)
         """
         self.settings = settings
+        self.config = config
         self.mcp_client: MCPClient | None = None
         self.agent: MedicalArticleAgent | None = None
         self._initialized = False
@@ -44,7 +47,8 @@ class Worker:
 
         try:
             # Validate API keys
-            self.settings.validate_api_keys()
+            agent_cfg = self.config.agent
+            self.settings.validate_api_keys(agent_cfg.llm_provider)
 
             # Initialize MCP client
             logger.info(f"Connecting to MCP server at {self.settings.mcp_server_url}")
@@ -62,23 +66,23 @@ class Worker:
             tools = self.mcp_client.get_tools()
             logger.info(f"Retrieved {len(tools)} tools from MCP server")
 
-            # Get model configuration
-            model_config = self.settings.get_model_defaults()
+            # Get API key for configured provider
             api_key = (
                 self.settings.openai_api_key
-                if self.settings.llm_provider == "openai"
+                if agent_cfg.llm_provider == "openai"
                 else self.settings.anthropic_api_key
             )
 
             # Initialize agent
-            logger.info(f"Creating agent with {self.settings.llm_provider} ({model_config['model']})")
+            logger.info(f"Creating agent with {agent_cfg.llm_provider} ({agent_cfg.model_name})")
             self.agent = MedicalArticleAgent(
                 tools=tools,
-                llm_provider=self.settings.llm_provider,
-                model_name=model_config["model"],
+                llm_provider=agent_cfg.llm_provider,
+                model_name=agent_cfg.model_name,
                 api_key=api_key,
-                temperature=model_config["temperature"],
-                max_tokens=model_config["max_tokens"],
+                temperature=agent_cfg.temperature,
+                max_tokens=agent_cfg.max_tokens,
+                max_steps=agent_cfg.max_steps,
             )
 
             # Initialize database
@@ -100,10 +104,13 @@ class Worker:
 
             # Initialize title generator
             logger.info("Initializing title generator")
+            title_cfg = self.config.context.title_generator
             self.title_generator = TitleGenerator(
-                llm_provider=self.settings.llm_provider,
+                llm_provider=agent_cfg.llm_provider,
                 api_key=api_key,
-                model_name="gpt-4o-mini",  # Use cheaper model for titles
+                model_name=title_cfg.model_name,
+                temperature=title_cfg.temperature,
+                max_tokens=title_cfg.max_tokens,
             )
 
             self._initialized = True
@@ -173,7 +180,7 @@ class Worker:
             return ""
 
         results = self.document_store.query(
-            conv_id, query, top_k=self.settings.pdf_top_k
+            conv_id, query, top_k=self.config.pdf.top_k
         )
 
         if not results:
@@ -317,31 +324,30 @@ class Worker:
 
     async def switch_llm_provider(
         self,
-        provider: Literal["openai", "anthropic"],
+        provider: str,
         model_name: str | None = None,
     ) -> None:
         """
         Switch to a different LLM provider.
 
         Args:
-            provider: New LLM provider
-            model_name: Optional model name (uses default if not provided)
+            provider: New LLM provider ("openai" or "anthropic")
+            model_name: Optional model name (uses current config default if not provided)
         """
         if not self._initialized or not self.agent:
             raise RuntimeError("Worker not initialized")
 
         logger.info(f"Switching LLM provider to {provider}")
 
-        # Update settings
-        self.settings.llm_provider = provider
-        if model_name:
-            self.settings.model_name = model_name
-
         # Validate new API key
-        self.settings.validate_api_keys()
+        self.settings.validate_api_keys(provider)
 
-        # Get new model config
-        model_config = self.settings.get_model_defaults()
+        # Update config
+        self.config.agent.llm_provider = provider
+        if model_name:
+            self.config.agent.model_name = model_name
+
+        agent_cfg = self.config.agent
         api_key = (
             self.settings.openai_api_key
             if provider == "openai"
@@ -351,10 +357,11 @@ class Worker:
         # Switch agent's LLM
         self.agent.switch_llm(
             llm_provider=provider,
-            model_name=model_config["model"],
+            model_name=agent_cfg.model_name,
             api_key=api_key,
-            temperature=model_config["temperature"],
-            max_tokens=model_config["max_tokens"],
+            temperature=agent_cfg.temperature,
+            max_tokens=agent_cfg.max_tokens,
+            max_steps=agent_cfg.max_steps,
         )
 
         logger.info(f"Successfully switched to {provider}")

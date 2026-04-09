@@ -1,143 +1,138 @@
 # TODO — Zarządzanie kontekstem konwersacji
 
-## Problem 1: Mieszanie konwersacji w agent memory
+## Aktualny stan: jak historia trafia do modelu
+
+Są trzy mechanizmy które wyglądają jak zarządzanie historią, ale tylko jeden faktycznie działa:
+
+1. **`_build_context()` + `full_query`** (worker.py:224-249) — **JEDYNY aktywny kanał.** Pobiera wszystkie wiadomości z Postgres, skleja w string, dopisuje aktualne query i wysyła jako `user_msg` do `agent.run()`. Model dostaje jeden duży blok tekstu z rolą `user`.
+
+2. **Wewnętrzny memory `ReActAgent`** — **NIE kumuluje się.** Każde wywołanie `agent.run(user_msg=...)` tworzy nowy kontekst workflow. Pamięć nie jest przekazywana między wywołaniami (brak parametru `memory` lub `chat_history` w `.run()`). Nie ma ryzyka mieszania konwersacji ani narastania stanu.
+
+3. **`self.chat_history`** w `MedicalArticleAgent` (agent.py:119) — **Martwy kod.** Lista jest modyfikowana w `chat()` (linia 137-149), ale nigdy nie jest przekazywana do `agent.run()` ani odczytywana przez żaden inny komponent.
+
+### Sekwencja zdarzeń przy obsłudze wiadomości (flow z API)
+
+1. API zapisuje wiadomość usera do Postgres (messages.py:137)
+2. API tworzy job w Redis
+3. Worker pobiera job, wywołuje `process_query_with_context(save_user_message=False)`
+4. Worker robi `get_messages(conv_id)` — pobiera **wszystkie** wiadomości, **łącznie z aktualną** (bo API już ją zapisało)
+5. `_build_context()` skleja je w string: `"Previous conversation:\nUser: ...\nAI: ...\nUser: aktualne query"`
+6. Linia 242: `full_query = f"{context}\n\nUser: {query}"` — dopisuje aktualne query na końcu
+7. `agent.chat(full_query)` → `agent.run(user_msg=full_query)` — model dostaje jeden string
+
+**Efekt:** Ostatnia wiadomość usera pojawia się w stringu dwa razy — raz na końcu kontekstu z bazy, raz dopisana w linii 242. Reszta historii nie jest zdublowana.
+
+---
+
+## Problem 1: Brak limitu na kontekst z bazy
 
 ### Opis
-Każdy Worker ma własną instancję `MedicalArticleAgent` (w `src/worker/agent.py`). Agent używa LlamaIndex `ReActAgent`, który utrzymuje wewnętrzny memory (stan między wywołaniami `run()`). Worker obsługuje joby z **różnych konwersacji** po kolei — np. konwersację A, potem B, potem znowu A. Agent memory **nie jest czyszczony między jobami**, więc przy przetwarzaniu konwersacji B agent "pamięta" wymianę z konwersacji A.
+`_build_context()` pobiera **wszystkie** wiadomości z Postgres bez żadnego limitu. Przy długich konwersacjach (20+ wiadomości) sam kontekst może zająć więcej tokenów niż okno kontekstowe modelu.
 
 ### Dotknięte pliki
-- `src/worker/worker.py` — `process_query_with_context()` wywołuje `self.agent.chat(full_query)` bez czyszczenia memory
-- `src/worker/agent.py` — `MedicalArticleAgent.chat()` dodaje każdą wiadomość do `self.chat_history` (linia 137-149), a `ReActAgent` kumuluje stan wewnętrznie
-
-### Skutek
-Agent przy przetwarzaniu konwersacji B ma w memory wiadomości z konwersacji A. Może to powodować halucynacje, kontaminację odpowiedzi między konwersacjami, i nieoczekiwane zachowanie.
+- `src/worker/worker.py` — `_build_context()` (linia 263), `process_query_with_context()` (linia 224: `get_messages(conv_id)` — bierze wszystko)
+- `src/database/repository.py` — `get_messages()` nie ma limitu
 
 ---
 
-## Problem 2: Podwójna historia konwersacji
+## Problem 2: Historia jako text blob zamiast structured messages
 
 ### Opis
-Historia tej samej konwersacji trafia do agenta **dwoma kanałami jednocześnie**:
+Cała historia konwersacji trafia do modelu jako jeden string wewnątrz jednej wiadomości z rolą `user`. Model nie widzi właściwej struktury konwersacji (ról user/assistant jako osobnych wiadomości).
 
-1. **Jako tekst w `full_query`** — `Worker._build_context()` (linia 263 w worker.py) pobiera **wszystkie** wiadomości z Postgres i skleja je w string:
-   ```
-   Previous conversation:
-   User: pierwsza wiadomość
-   AI: pierwsza odpowiedź
-   ...
-   User: {aktualne query}
-   ```
-   Ten string idzie jako argument do `agent.chat(full_query)`.
+LLM-y są trenowane na rozróżnianiu ról w konwersacji. Wiadomość z `role=assistant` jest traktowana jako "to powiedziałem ja" — model lepiej utrzymuje spójność i styl. Tekst "AI: odpowiedź" w bloku usera to dla modelu cytat, nie jego własna pamięć.
 
-2. **W agent memory** — `ReActAgent` automatycznie dodaje każde wywołanie `run()` do swojego wewnętrznego stanu. Więc po 5 wiadomościach w konwersacji A, agent ma w memory 5 poprzednich "rozmów" (z których każda zawierała rosnący `_build_context`).
-
-### Skutek
-Przy N-tej wiadomości w konwersacji:
-- `full_query` zawiera N-1 poprzednich wiadomości jako tekst
-- Agent memory zawiera N-1 poprzednich wywołań (każde z rosnącym kontekstem)
-- Efektywnie historia jest zduplikowana i rośnie kwadratowo
-- Łatwo o przekroczenie limitu tokenów modelu
-
----
-
-## Problem 3: Brak limitu na kontekst z bazy
-
-### Opis
-`Worker._build_context()` pobiera **wszystkie** wiadomości z Postgres bez żadnego limitu. Przy długich konwersacjach (20+ wiadomości) sam kontekst może zająć więcej tokenów niż okno kontekstowe modelu.
+`ReActAgent.run()` akceptuje parametr `chat_history` — listę `ChatMessage` z właściwymi rolami. Ten mechanizm nie jest wykorzystywany.
 
 ### Dotknięte pliki
-- `src/worker/worker.py` — `_build_context()` (linia 263), `process_query_with_context()` (linia 224: `messages = await repo.get_messages(conv_id)` — bierze wszystko)
-- `src/database/repository.py` — `get_messages()` prawdopodobnie nie ma limitu
+- `src/worker/worker.py` — `_build_context()` buduje string zamiast listy `ChatMessage`
+- `src/worker/agent.py` — `chat()` przekazuje string do `agent.run(user_msg=...)` zamiast używać `chat_history`
 
 ---
 
-## Rozwiązanie: Opcja A — Postgres jako jedyne źródło historii
-
-### Zasada
-Agent memory powinien być **resetowany przed każdym jobem**. Jedynym źródłem historii konwersacji jest baza Postgres, podawana przez `_build_context()`. To daje pełną kontrolę nad tym co i ile kontekstu trafia do agenta.
-
-### Kroki implementacji
-
-#### Krok 1: Reset agent memory przed każdym jobem
-- W `src/worker/worker.py`, w `process_query_with_context()`, **przed** wywołaniem `agent.chat()`:
-  - Wywołać `self.agent.reset_chat_history()` (metoda już istnieje w agent.py linia 198)
-  - Sprawdzić czy ReActAgent z LlamaIndex ma osobny wewnętrzny memory do zresetowania (może wymagać `self.agent.agent.memory.reset()` lub podobnego)
-- Efekt: agent zawsze zaczyna z czystym stanem, historia bierze się wyłącznie z `_build_context()`
-
-#### Krok 2: Limit wiadomości w `_build_context()`
-- Dodać parametr `max_messages` do `_build_context()` (np. domyślnie 20 — ostatnich 10 par user+AI)
-- Ewentualnie dodać `context_max_messages` do `src/config/settings.py`
-- Pobierać tylko ostatnie N wiadomości z Postgres (zmodyfikować query w `get_messages()` lub ciąć w `_build_context()`)
-
-#### Krok 3 (opcjonalny, przyszłość): Summarization starszych wiadomości
-- Przy konwersacjach dłuższych niż N wiadomości: streszczać starsze wiadomości jednym wywołaniem LLM
-- Zapisywać streszczenie w Postgres (np. pole `summary` w tabeli `Conversation`)
-- Nowy kontekst = streszczenie + ostatnie N wiadomości
-- Wymaga dodatkowego wywołania LLM, ale zachowuje kluczowe informacje z początku konwersacji
-
-### Pliki do modyfikacji
-| Plik | Zmiana |
-|------|--------|
-| `src/worker/worker.py` | Reset agent memory w `process_query_with_context()`, limit w `_build_context()` |
-| `src/worker/agent.py` | Upewnić się że `reset_chat_history()` czyści też ReActAgent memory |
-| `src/config/settings.py` | Nowy parametr `context_max_messages` |
-| `src/database/repository.py` | Opcjonalnie: limit w `get_messages()` |
-
-### Weryfikacja
-1. Uruchomić dwa joby z różnych konwersacji na tym samym workerze — odpowiedź z drugiej konwersacji nie powinna zawierać informacji z pierwszej
-2. Przetestować długą konwersację (>20 wiadomości) — agent powinien widzieć tylko ostatnie N wiadomości + zachowywać się poprawnie
-3. Sprawdzić rozmiar `full_query` w logach — nie powinien rosnąć bez limitu
-
----
-
-## Problem 4: Artykuły eksplodują rozmiar kontekstu
+## Problem 3: Dublowanie ostatniej wiadomości usera
 
 ### Opis
-Agent generuje artykuły o długości 800-1500 słów (wymóg w system prompcie, `src/worker/agent.py` linia 46). Nawet ze sliding window np. 5 par wiadomości, jeśli 3 z nich to artykuły, kontekst ma 3000-4500 słów (~4000-6000 tokenów) samej historii — zanim jeszcze dojdzie aktualne query, kontekst PDF, i system prompt.
+API zapisuje wiadomość usera do Postgres **przed** utworzeniem joba. Worker pobiera wszystkie wiadomości (łącznie z aktualną) i buduje kontekst. Potem w linii 242 dopisuje aktualne query na końcu: `full_query = f"{context}\n\nUser: {query}"`. Ostatnia wiadomość usera pojawia się dwa razy.
 
-Zwykłe wiadomości (dopytywanie, odpowiadanie na pytania) to 1-3 zdania. Artykuły to 50-100x więcej. Traktowanie ich jednakowo w historii jest nieefektywne — agent nie potrzebuje pełnego tekstu poprzedniego artykułu żeby kontynuować rozmowę.
+### Dotknięte pliki
+- `src/worker/worker.py` — linia 224 (pobiera wszystko) + linia 242 (dopisuje query)
 
-### Rozwiązanie: Typowanie wiadomości + streszczenia artykułów
+---
+
+## Problem 4: Martwy kod `self.chat_history`
+
+### Opis
+`MedicalArticleAgent.chat_history` (agent.py:119) jest listą `ChatMessage` modyfikowaną przy każdym `chat()` (linia 137-149), ale nigdy nie jest:
+- przekazywana do `agent.run()`
+- odczytywana przez żaden inny komponent (poza `get_chat_history()` które też nie jest wywoływane)
+
+### Dotknięte pliki
+- `src/worker/agent.py` — `self.chat_history`, `chat()`, `stream_chat()`, `reset_chat_history()`, `get_chat_history()`
+
+---
+
+## Problem 5: Artykuły eksplodują rozmiar kontekstu
+
+### Opis
+Agent generuje artykuły o długości 800-1500 słów (wymóg w system prompcie, agent.py linia 46). Przy sliding window np. 5 par wiadomości, jeśli 3 z nich to artykuły, kontekst ma 3000-4500 słów (~4000-6000 tokenów) samej historii — zanim jeszcze dojdzie aktualne query, kontekst PDF i system prompt.
+
+Zwykłe wiadomości (dopytywanie, odpowiadanie na pytania) to 1-3 zdania. Artykuły to 50-100x więcej. Traktowanie ich jednakowo w historii jest nieefektywne.
+
+---
+
+## Rozwiązanie
+
+### Kolejność implementacji
+1. Najpierw Problemy 1-4 (limit, structured messages, deduplikacja, cleanup martwego kodu)
+2. Potem Problem 5 (typowanie wiadomości + streszczenia artykułów)
+
+### Krok 1: Structured messages + limit + cleanup
+
+**Zasada:** Zamiast budować string z historii, budować listę `ChatMessage` z Postgres i przekazywać ją przez parametr `chat_history` do `agent.run()`. Usunąć martwy kod.
+
+#### Zmiany:
+- **`src/worker/worker.py`**:
+  - `_build_context()` → zastąpić metodą budującą `list[ChatMessage]` z ostatnich N wiadomości z Postgres (bez aktualnej wiadomości usera — ta idzie jako `user_msg`)
+  - `process_query_with_context()` → przekazywać `chat_history` do `agent.chat()`, a `agent.chat()` przekazuje do `agent.run(user_msg=query, chat_history=chat_history)`
+  - Usunąć ręczne sklejanie `full_query`
+- **`src/worker/agent.py`**:
+  - `chat()` → przyjmować `chat_history` jako parametr, przekazywać do `self.agent.run(user_msg=message, chat_history=chat_history)`
+  - Usunąć `self.chat_history`, `reset_chat_history()`, `get_chat_history()` — martwy kod
+  - `stream_chat()` → analogicznie
+- **`src/config/settings.py`** — nowy parametr `context_max_messages` (domyślnie 20)
+- **`src/database/repository.py`** — opcjonalnie: limit w `get_messages()` lub przycinanie w workerze
+
+#### Obsługa kontekstu PDF
+Kontekst PDF nadal dorzucać jako osobną wiadomość `user` lub `system` przed historią konwersacji.
+
+### Krok 2: Typowanie wiadomości + streszczenia artykułów
 
 #### Koncept
 Odpowiedzi agenta dzielą się na dwa typy:
-- **SimpleAnswer** — zwykła wymiana: dopytywanie o szczegóły, odpowiadanie na pytania, wyjaśnienia. Krótkie, trafiają do historii w pełni.
+- **SimpleAnswer** — zwykła wymiana: dopytywanie, odpowiadanie na pytania. Krótkie, trafiają do historii w pełni.
 - **Article** — wygenerowany artykuł. Długi, w historii zastępowany streszczeniem.
 
 #### Zmiany w bazie danych
 
 **Tabela `Message`** (`src/database/models.py`) — dodać dwa pola:
-- `message_type: str` — `"simple"` lub `"article"` (domyślnie `"simple"`). Dotyczy tylko wiadomości z role=AI, wiadomości usera są zawsze "simple".
+- `message_type: str` — `"simple"` lub `"article"` (domyślnie `"simple"`). Dotyczy tylko wiadomości z role=AI.
 - `summary: str | None` — streszczenie artykułu (null dla SimpleAnswer i wiadomości usera)
 
-Pełna treść artykułu zawsze zostaje w `content` (user widzi go w UI). Pole `summary` to wersja do użytku w historii kontekstu.
-
-Wymaga migracji bazy (Alembic lub ręczny ALTER TABLE).
+Pełna treść artykułu zostaje w `content` (user widzi go w UI). Pole `summary` to wersja do użytku w historii kontekstu. Wymaga migracji bazy (Alembic lub ręczny ALTER TABLE).
 
 #### Klasyfikacja i streszczanie odpowiedzi
 
 Po wygenerowaniu odpowiedzi przez agenta, worker:
-1. **Klasyfikuje** typ odpowiedzi — heurystycznie (np. długość > 500 słów, zawiera nagłówki/sekcje, zawiera referencje `[1]`, `[2]`...) lub przez szybkie wywołanie tańszego modelu
-2. Jeśli typ = **Article**: generuje streszczenie (1-3 zdania) przez tańszy model (gpt-4o-mini, ten sam co `TitleGenerator` w `src/worker/title_generator.py`)
+1. **Klasyfikuje** typ odpowiedzi — heurystycznie (np. długość > 500 słów, zawiera nagłówki/sekcje, zawiera referencje `[1]`, `[2]`...)
+2. Jeśli typ = **Article**: generuje streszczenie (1-3 zdania) przez tańszy model (gpt-4o-mini, analogicznie do `TitleGenerator`)
 3. Zapisuje w Postgres: `content=pełny artykuł`, `message_type="article"`, `summary="Streszczenie..."`
 
-#### Budowanie kontekstu z uwzględnieniem typów
+#### Budowanie historii z uwzględnieniem typów
 
-`_build_context()` zmienia logikę:
-- Dla wiadomości z `message_type="simple"` → używa `content` (pełna treść)
-- Dla wiadomości z `message_type="article"` → używa `summary` zamiast `content`
-- Wyjątek: **ostatni artykuł** w oknie może być w pełni (jeśli user do niego nawiązuje), albo też streszczony — do ustalenia
-
-Przykładowy kontekst po 6 wiadomościach (3 pary):
-```
-Previous conversation:
-User: Napisz artykuł o leczeniu cukrzycy typu 2
-AI: [Artykuł] Wygenerowano artykuł o leczeniu cukrzycy typu 2 (1200 słów). Główne wątki: metformina jako pierwsza linia, modyfikacja diety, aktywność fizyczna. Źródła: 5 publikacji PubMed.
-User: Dodaj sekcję o insulinoterapii
-AI: [Artykuł] Zaktualizowano artykuł — dodano sekcję o insulinoterapii (1400 słów). Nowe wątki: wskazania do insuliny, typy insulin, schematy dawkowania.
-User: Jakie są najnowsze badania o GLP-1?
-```
-Zamiast 2800 słów artykułów w historii — ~100 słów streszczeń.
+Przy budowaniu `list[ChatMessage]`:
+- Dla `message_type="simple"` → używa `content`
+- Dla `message_type="article"` → używa `summary` zamiast `content`
 
 #### Pliki do modyfikacji
 
@@ -146,12 +141,20 @@ Zamiast 2800 słów artykułów w historii — ~100 słów streszczeń.
 | `src/database/models.py` | Dodać pola `message_type` i `summary` do modelu `Message` |
 | `src/api/schemas.py` | Zaktualizować `MessageResponse` o nowe pola |
 | `src/worker/worker.py` | Po `agent.chat()`: klasyfikacja typu, generowanie streszczenia, zapis z nowym typem |
-| `src/worker/worker.py` | `_build_context()`: logika wyboru `content` vs `summary` |
-| `src/worker/title_generator.py` | Rozszerzyć lub stworzyć analogiczny `ArticleSummarizer` (może reużyć ten sam tańszy model) |
+| `src/worker/worker.py` | Budowanie `ChatMessage` list: logika wyboru `content` vs `summary` |
+| `src/worker/title_generator.py` | Rozszerzyć lub stworzyć analogiczny `ArticleSummarizer` |
 | `src/config/settings.py` | Parametry: `article_length_threshold`, `summary_model_name` |
 | Migracja DB | ALTER TABLE messages ADD COLUMN message_type, ADD COLUMN summary |
 
-#### Kolejność implementacji
-1. Najpierw Krok 1-2 z sekcji "Rozwiązanie: Opcja A" (reset memory + sliding window) — eliminuje podwójną historię i mieszanie konwersacji
-2. Potem typowanie wiadomości + streszczenia — optymalizuje rozmiar kontekstu przy dłuższych konwersacjach
-3. Na końcu ewentualny summarization całej konwersacji (Krok 3 z Opcji A) — tylko jeśli potrzebny po wdrożeniu punktu 2
+### Krok 3 (opcjonalny, przyszłość): Summarization starszych wiadomości
+- Przy konwersacjach dłuższych niż N wiadomości: streszczać starsze wiadomości jednym wywołaniem LLM
+- Zapisywać streszczenie w Postgres (np. pole `summary` w tabeli `Conversation`)
+- Nowy kontekst = streszczenie + ostatnie N wiadomości
+
+---
+
+## Weryfikacja
+1. Sprawdzić że model dostaje właściwe `ChatMessage` z rolami (logować zawartość `chat_history` przed `agent.run()`)
+2. Przetestować długą konwersację (>20 wiadomości) — agent powinien widzieć tylko ostatnie N wiadomości
+3. Sprawdzić że ostatnia wiadomość usera nie jest zdublowana
+4. Upewnić się że martwy kod (`self.chat_history` w agent.py) został usunięty

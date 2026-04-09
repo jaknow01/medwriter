@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from src.config.settings import settings
+from src.config.json_config import app_config
 from src.worker.worker import Worker
 
 app = typer.Typer()
@@ -114,10 +115,11 @@ class CLIInterface:
         Returns:
             True if initialization successful
         """
-        console.print(f"\n[cyan]Initializing agent with {settings.llm_provider} ({settings.model_name})...[/cyan]")
+        agent_cfg = app_config.agent
+        console.print(f"\n[cyan]Initializing agent with {agent_cfg.llm_provider} ({agent_cfg.model_name})...[/cyan]")
 
         try:
-            self.worker = Worker(settings)
+            self.worker = Worker(settings, app_config)
             await self.worker.initialize()
             console.print("[green]✓ Worker initialized[/green]")
             return True

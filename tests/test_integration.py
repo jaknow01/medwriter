@@ -5,13 +5,13 @@ from uuid import uuid4
 
 from src.worker.worker import Worker
 from src.config.settings import Settings
+from src.config.json_config import AppConfig
 
 
 @pytest.fixture
 def settings():
     """Create test settings."""
     return Settings(
-        llm_provider="openai",
         openai_api_key="test-key",
         mcp_server_url="http://localhost:8001/mcp",
         database_url="postgresql+asyncpg://medwriter:password@localhost:5432/medwriter_test_db",
@@ -20,13 +20,19 @@ def settings():
     )
 
 
+@pytest.fixture
+def config():
+    """Create test app config."""
+    return AppConfig()
+
+
 @pytest.mark.integration
 class TestPhaseTwo:
     """Integration tests for Phase Two features."""
 
-    async def test_worker_initialization_with_db_redis(self, settings):
+    async def test_worker_initialization_with_db_redis(self, settings, config):
         """Test worker initializes with database and Redis."""
-        worker = Worker(settings)
+        worker = Worker(settings, config)
 
         # Note: This will fail if MCP server is not running
         # For true integration test, MCP server should be running
@@ -44,9 +50,9 @@ class TestPhaseTwo:
             # Expected if MCP server not running
             pytest.skip(f"MCP server not available: {e}")
 
-    async def test_conversation_with_context(self, settings):
+    async def test_conversation_with_context(self, settings, config):
         """Test processing query with conversation context."""
-        worker = Worker(settings)
+        worker = Worker(settings, config)
 
         try:
             await worker.initialize()

@@ -67,6 +67,7 @@ class MedicalArticleAgent:
         api_key: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2000,
+        max_steps: int = 15,
     ):
         """
         Initialize the medical article agent.
@@ -78,10 +79,12 @@ class MedicalArticleAgent:
             api_key: API key for the LLM provider
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
+            max_steps: Maximum reasoning steps for ReAct agent
         """
         self.tools = tools
         self.llm_provider = llm_provider
         self.model_name = model_name
+        self.max_steps = max_steps
 
         logger.info(f"Initializing agent with {llm_provider} ({model_name})")
         logger.debug(f"Agent has {len(tools)} tools available")
@@ -104,14 +107,14 @@ class MedicalArticleAgent:
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_provider}")
 
-        # Initialize ReAct agent (max 15 reasoning steps to prevent runaway loops)
+        # Initialize ReAct agent
         self.agent = ReActAgent(
             name="MedicalArticleAgent",
             description="Agent for drafting medical articles",
             system_prompt=MEDICAL_ARTICLE_SYSTEM_PROMPT,
             tools=self.tools,
             llm=self.llm,
-            max_steps=15,
+            max_steps=self.max_steps,
             verbose=True,
         )
 
@@ -211,6 +214,7 @@ class MedicalArticleAgent:
         api_key: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2000,
+        max_steps: int = 15,
     ) -> None:
         """
         Switch to a different LLM provider/model.
@@ -221,11 +225,13 @@ class MedicalArticleAgent:
             api_key: API key for the new provider
             temperature: Sampling temperature
             max_tokens: Maximum tokens
+            max_steps: Maximum reasoning steps
         """
         logger.info(f"Switching LLM to {llm_provider} ({model_name})")
 
         self.llm_provider = llm_provider
         self.model_name = model_name
+        self.max_steps = max_steps
 
         # Create new LLM
         if llm_provider == "openai":
@@ -252,6 +258,7 @@ class MedicalArticleAgent:
             system_prompt=MEDICAL_ARTICLE_SYSTEM_PROMPT,
             tools=self.tools,
             llm=self.llm,
+            max_steps=self.max_steps,
             verbose=True,
         )
 

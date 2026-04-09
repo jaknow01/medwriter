@@ -5,6 +5,7 @@ from uuid import UUID
 from loguru import logger
 
 from src.config.settings import Settings
+from src.config.json_config import AppConfig, app_config
 from src.worker.worker import Worker
 from src.redis import RedisManager, JobQueue
 
@@ -12,17 +13,19 @@ from src.redis import RedisManager, JobQueue
 class WorkerPoller:
     """Worker that continuously polls Redis for jobs and processes them."""
 
-    def __init__(self, settings: Settings, worker_id: str | None = None):
+    def __init__(self, settings: Settings, config: AppConfig, worker_id: str | None = None):
         """
         Initialize worker poller.
 
         Args:
-            settings: Application settings
+            settings: Infrastructure settings (secrets, URLs)
+            config: Application config (models, chunking, context)
             worker_id: Optional custom worker ID (overrides settings.worker_id)
         """
         # Create a copy of settings to avoid modifying shared instance
         from copy import copy
         self.settings = copy(settings)
+        self.config = config
 
         if worker_id:
             # Override worker_id in this worker's settings copy
@@ -38,7 +41,7 @@ class WorkerPoller:
         logger.info(f"Initializing worker poller (ID: {self.settings.worker_id})")
 
         # Initialize worker (connects to MCP, DB, Redis)
-        self.worker = Worker(self.settings)
+        self.worker = Worker(self.settings, self.config)
         await self.worker.initialize()
         logger.info("Worker initialized")
 
@@ -253,6 +256,7 @@ async def main():
     import os
 
     settings = Settings()
+    config = app_config
 
     # Get number of workers from environment (default 3, max 6)
     num_workers = int(os.getenv("NUM_WORKERS", "3"))
@@ -262,7 +266,7 @@ async def main():
 
     # Create multiple worker pollers with unique IDs
     pollers = [
-        WorkerPoller(settings, worker_id=f"worker-{i+1}")
+        WorkerPoller(settings, config, worker_id=f"worker-{i+1}")
         for i in range(num_workers)
     ]
 

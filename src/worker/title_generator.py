@@ -15,6 +15,8 @@ class TitleGenerator:
         llm_provider: Literal["openai", "anthropic"],
         api_key: str,
         model_name: str = "gpt-4o-mini",
+        temperature: float = 0.7,
+        max_tokens: int = 50,
     ):
         """Initialize title generator.
 
@@ -22,6 +24,8 @@ class TitleGenerator:
             llm_provider: LLM provider ("openai" or "anthropic")
             api_key: API key for the provider
             model_name: Model name to use
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens for title generation
         """
         self.llm_provider = llm_provider
 
@@ -29,15 +33,15 @@ class TitleGenerator:
             self.llm = OpenAI(
                 model=model_name,
                 api_key=api_key,
-                temperature=0.7,
-                max_tokens=50,  # Very short for titles
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
         elif llm_provider == "anthropic":
             self.llm = Anthropic(
                 model=model_name,
                 api_key=api_key,
-                temperature=0.7,
-                max_tokens=50,
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_provider}")

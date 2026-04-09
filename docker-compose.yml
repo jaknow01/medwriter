@@ -99,6 +99,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
+      - ./config:/app/config
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,8 +129,6 @@ services:
       - DATABASE_URL=postgresql+asyncpg://medwriter:${POSTGRES_PASSWORD}@postgres:5432/medwriter_db
       - REDIS_URL=redis://redis:6379/0
       - MCP_SERVER_URL=http://mcp_server:8000/mcp
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - MODEL_NAME=${MODEL_NAME:-gpt-4.1-mini}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHROMADB_HOST=chromadb
@@ -139,6 +138,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
+      - ./config:/app/config
     depends_on:
       postgres:
         condition: service_healthy

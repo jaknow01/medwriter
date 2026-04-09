@@ -1,12 +1,15 @@
-"""Configuration management for MedWriter."""
+"""Configuration management for MedWriter.
 
-from typing import Literal
-from pydantic import Field, field_validator
+Secrets and infrastructure settings are loaded from environment variables (.env).
+Behavioral parameters (models, chunking, context) are in config/config.json — see json_config.py.
+"""
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Infrastructure and secrets loaded from environment variables."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -15,11 +18,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM Configuration
-    llm_provider: Literal["openai", "anthropic"] = Field(
-        default="openai",
-        description="LLM provider to use (openai or anthropic)"
-    )
+    # API Keys
     openai_api_key: str | None = Field(
         default=None,
         description="OpenAI API key"
@@ -27,10 +26,6 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = Field(
         default=None,
         description="Anthropic API key"
-    )
-    model_name: str = Field(
-        default="gpt-4",
-        description="Model name to use"
     )
 
     # MCP Configuration
@@ -65,7 +60,7 @@ class Settings(BaseSettings):
         description="Redis connection URL"
     )
 
-    # PDF / ChromaDB Configuration
+    # ChromaDB Configuration
     chromadb_host: str = Field(
         default="localhost",
         description="ChromaDB server host"
@@ -74,18 +69,6 @@ class Settings(BaseSettings):
         default=8000,
         description="ChromaDB server port"
     )
-    pdf_chunk_size: int = Field(
-        default=1000,
-        description="Chunk size in tokens for PDF text splitting"
-    )
-    pdf_chunk_overlap: int = Field(
-        default=200,
-        description="Chunk overlap in tokens for PDF text splitting"
-    )
-    pdf_top_k: int = Field(
-        default=5,
-        description="Number of PDF chunks to retrieve per query"
-    )
 
     # Worker Configuration
     worker_id: str = Field(
@@ -93,35 +76,16 @@ class Settings(BaseSettings):
         description="Unique worker identifier"
     )
 
-    @field_validator("llm_provider")
-    @classmethod
-    def validate_llm_provider(cls, v: str) -> str:
-        """Validate LLM provider."""
-        if v not in ["openai", "anthropic"]:
-            raise ValueError("llm_provider must be 'openai' or 'anthropic'")
-        return v
+    def validate_api_keys(self, llm_provider: str) -> None:
+        """Validate that required API key is present for the given provider.
 
-    def validate_api_keys(self) -> None:
-        """Validate that required API key is present for selected provider."""
-        if self.llm_provider == "openai" and not self.openai_api_key:
+        Args:
+            llm_provider: LLM provider name from app config ("openai" or "anthropic")
+        """
+        if llm_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when using OpenAI provider")
-        if self.llm_provider == "anthropic" and not self.anthropic_api_key:
+        if llm_provider == "anthropic" and not self.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required when using Anthropic provider")
-
-    def get_model_defaults(self) -> dict:
-        """Get default model configuration based on provider."""
-        if self.llm_provider == "openai":
-            return {
-                "model": self.model_name or "gpt-4",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-            }
-        else:  # anthropic
-            return {
-                "model": self.model_name or "claude-3-opus-20240229",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-            }
 
 
 # Global settings instance
