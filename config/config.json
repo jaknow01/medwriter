@@ -24,7 +24,7 @@
       "max_tokens": 50
     },
     "article_summarizer": {
-      "enabled": false,
+      "enabled": true,
       "model_name": "gpt-4o-mini",
       "temperature": 0.3,
       "max_tokens": 200,

@@ -1,5 +1,5 @@
 # Base image with Python
-FROM python:3.10-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
@@ -17,7 +17,31 @@ ENV PATH="/root/.local/bin:${PATH}"
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies
-RUN uv pip install --system -r pyproject.toml
+RUN uv pip install --system -e . --no-build-isolation || uv pip install --system \
+    llama-index \
+    llama-index-llms-openai \
+    llama-index-llms-anthropic \
+    fastmcp \
+    httpx \
+    pydantic \
+    pydantic-settings \
+    python-dotenv \
+    loguru \
+    typer \
+    rich \
+    nest-asyncio \
+    "sqlalchemy[asyncio]" \
+    asyncpg \
+    alembic \
+    "redis[hiredis]" \
+    fastapi \
+    "uvicorn[standard]" \
+    python-multipart \
+    pymupdf \
+    chromadb \
+    llama-index-vector-stores-chroma \
+    llama-index-embeddings-openai \
+    llama-index-retrievers-bm25
 
 # Copy application code
 COPY . .

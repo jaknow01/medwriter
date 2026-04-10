@@ -286,7 +286,6 @@ class Worker:
         """
         word_count = len(response.split())
         threshold = self.config.context.article_summarizer.word_count_threshold
-
         # Must exceed word count threshold
         if word_count < threshold:
             return "simple"
@@ -295,8 +294,8 @@ class Worker:
         references = re.findall(r"\[\d+\]", response)
         has_references = len(set(references)) >= 1
 
-        # Count section headings (markdown ## or bold **Heading**)
-        heading_patterns = re.findall(r"(?m)^#{1,3}\s+.+|^\*\*[A-Z].+\*\*$", response)
+        # Count section headings: markdown ##, bold **Heading**, or plain single-line headings
+        heading_patterns = re.findall(r"(?m)^#{1,3}\s+.+|^\*\*[A-Z].+\*\*$|^[A-ZŁŚŻŹĆĄĘÓ][^\n]{3,60}$", response)
         has_headings = len(heading_patterns) >= 2
 
         # Article = long + has both references and section structure

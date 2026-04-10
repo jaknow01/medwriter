@@ -47,12 +47,6 @@ services:
       - chromadb_data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     networks:
       - medwriter_network
     restart: unless-stopped
@@ -96,6 +90,8 @@ services:
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
       - LOG_LEVEL=INFO
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
@@ -106,7 +102,7 @@ services:
       redis:
         condition: service_healthy
       chromadb:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 10s
@@ -147,7 +143,7 @@ services:
       mcp_server:
         condition: service_healthy
       chromadb:
-        condition: service_healthy
+        condition: service_started
     networks:
       - medwriter_network
     restart: unless-stopped
