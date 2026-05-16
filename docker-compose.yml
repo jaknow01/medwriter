@@ -66,6 +66,7 @@ services:
       - MCP_PORT=8000
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
+      - MCP_TRANSPORT=http
     depends_on:
       chromadb:
         condition: service_started
