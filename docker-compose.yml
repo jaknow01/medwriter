@@ -54,7 +54,7 @@ services:
   # MCP Server (real medwriter-server with PubMed tools)
   mcp_server:
     build:
-      context: /home/kuba/medwriter-server
+      context: ../medwriter-server
       dockerfile: Dockerfile
     container_name: medwriter_mcp
     expose:
