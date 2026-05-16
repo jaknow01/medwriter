@@ -64,6 +64,11 @@ services:
       - ENTREZ_EMAIL=${ENTREZ_EMAIL}
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    depends_on:
+      chromadb:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('localhost',8000),2); s.close()"]
       interval: 10s
