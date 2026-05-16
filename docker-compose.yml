@@ -51,35 +51,6 @@ services:
       - medwriter_network
     restart: unless-stopped
 
-  # MCP Server (real medwriter-server with PubMed tools)
-  mcp_server:
-    build:
-      context: ../medwriter-server
-      dockerfile: Dockerfile
-    container_name: medwriter_mcp
-    expose:
-      - "8000"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - ENTREZ_EMAIL=${ENTREZ_EMAIL}
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8000
-      - MCP_TRANSPORT=http
-    depends_on:
-      chromadb:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('localhost',8000),2); s.close()"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
-    networks:
-      - medwriter_network
-    restart: unless-stopped
-
   # FastAPI Backend
   api:
     build:
@@ -130,7 +101,7 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql+asyncpg://medwriter:${POSTGRES_PASSWORD}@postgres:5432/medwriter_db
       - REDIS_URL=redis://redis:6379/0
-      - MCP_SERVER_URL=http://mcp_server:8000/mcp
+      - MCP_SERVER_URL=${MCP_SERVER_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - CHROMADB_HOST=chromadb
@@ -145,8 +116,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      mcp_server:
         condition: service_healthy
       chromadb:
         condition: service_started
